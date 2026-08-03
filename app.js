@@ -192,6 +192,115 @@ const CloudAPI = {
     updateNickname(nickname) { return this.request('/api/me', { method: 'PUT', body: { nickname } }); }
 };
 
+/* ==================== 统一登录（云端优先 + 本地兜底 + 自动迁移） ==================== */
+// 记录变更后，若已登录云端，防抖把本地记录同步到后端（失败静默）
+let _syncTimer = null;
+function scheduleCloudSync() {
+    if (!CloudAPI.connected) return;
+    if (_syncTimer) clearTimeout(_syncTimer);
+    _syncTimer = setTimeout(() => {
+        CloudAPI.sync(Store.getRecords()).catch(() => {});
+    }, 600);
+}
+
+// 把本地账号的会话/数据对齐到云端：写云端会话、建本地用户、下载并合并记录、上传历史记录
+async function bindCloudSession(res, account, fallbackNickname) {
+    CloudAPI.token = res.token;
+    CloudAPI.account = res.account;
+    CloudAPI.nickname = res.nickname || fallbackNickname || account;
+
+    const users = Store.getUsers();
+    if (!users[account]) {
+        users[account] = { account, password: '', nickname: CloudAPI.nickname, createdAt: Date.now(), records: [] };
+        Store.saveUsers(users);
+    }
+    Store.setSession(account);
+
+    // 下载云端记录到本地缓存（云端优先，本地独有记录保留）
+    try {
+        const data = await CloudAPI.getRecords();
+        if (data && Array.isArray(data.records)) Store.mergeCloud(data.records);
+    } catch (e) {}
+
+    // 若本地有同名账号的历史记录，上传到云端（首次迁移，避免丢数据）
+    try {
+        const localUser = Store.getUsers()[account];
+        if (localUser && Array.isArray(localUser.records) && localUser.records.length) {
+            await CloudAPI.sync(localUser.records);
+        }
+    } catch (e) {}
+}
+
+// 统一登录/注册：优先云端（多设备同步），后端不可用时退回本地
+async function unifiedAuth(account, password, isRegister, nickname) {
+    let res = null, err = null;
+    try {
+        res = isRegister
+            ? await CloudAPI.register(account, password, nickname)
+            : await CloudAPI.login(account, password);
+    } catch (e) { err = e; }
+
+    // 后端不可用（静态托管 / 离线）→ 退回纯本地登录
+    const unavailable = err && /暂不可用|Failed to fetch|NetworkError|网络/.test(err.message);
+    if (!res && unavailable) {
+        const lr = isRegister ? Store.register(account, password, nickname || account) : Store.login(account, password);
+        if (!lr.ok) return { ok: false, message: lr.msg };
+        return { ok: true };
+    }
+
+    // 云端明确错误：账号不存在且本地有同名同密码账号 → 自动迁移到云端
+    if (!res || !res.token) {
+        if (err && /账号不存在/.test(err.message)) {
+            const lu = Store.getUsers()[account];
+            if (lu && lu.password === password) {
+                try { res = await CloudAPI.register(account, password, lu.nickname || nickname || account); }
+                catch (e2) { err = e2; }
+            }
+        }
+        if (!res || !res.token) {
+            return { ok: false, message: (res && res.error) || (err && err.message) || '登录失败' };
+        }
+    }
+
+    await bindCloudSession(res, account, nickname);
+    return { ok: true };
+}
+
+// 启动后：若本地已登录但云端未连，尝试用本地存储的密码把账号迁到云端（静默）
+async function autoCloudMigrate() {
+    if (CloudAPI.connected) return;
+    const account = Store.getSession();
+    if (!account) return;
+    const user = Store.getUsers()[account];
+    if (!user || !user.password) return;
+    try {
+        let res = null, err = null;
+        try { res = await CloudAPI.login(account, user.password); }
+        catch (e) { err = e; }
+        if (!res || !res.token) {
+            if (err && /账号不存在/.test(err.message)) {
+                try { res = await CloudAPI.register(account, user.password, user.nickname || account); }
+                catch (e2) { return; }
+            } else return;
+        }
+        if (!res || !res.token) return;
+        CloudAPI.token = res.token;
+        CloudAPI.account = res.account;
+        CloudAPI.nickname = res.nickname || user.nickname || account;
+        if (Array.isArray(user.records) && user.records.length) {
+            await CloudAPI.sync(user.records);
+        }
+        try {
+            const data = await CloudAPI.getRecords();
+            if (data && Array.isArray(data.records)) Store.mergeCloud(data.records);
+        } catch (e) {}
+        // 迁移成功后刷新当前页面视图
+        const cur = document.querySelector('.page.active');
+        if (cur && cur.id === 'home-page') PageHome.render();
+        if (cur && cur.id === 'history-page') PageHistory.render();
+    } catch (e) {}
+}
+
 /* ==================== 工具函数 ==================== */
 const Utils = {
     uid() {
@@ -712,6 +821,7 @@ const PageRecord = {
                 type,
                 eventName
             });
+            scheduleCloudSync();
             Toast.show('成绩已更新', { type: 'success' });
             setTimeout(() => Router.navigate('history'), 800);
         } else {
@@ -728,6 +838,7 @@ const PageRecord = {
                 createdAt: Date.now()
             };
             Store.addRecord(newRecord);
+            scheduleCloudSync();
 
             // 检查是否破最佳（按 泳姿+距离+类型 判定）
             const allRecords = Store.getRecords();
@@ -1579,47 +1690,40 @@ function bindEvents() {
         });
     });
 
-    // 登录
-    document.getElementById('login-form').addEventListener('submit', (e) => {
+    // 登录（云端优先，自动同步多设备）
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const account = document.getElementById('login-account').value.trim();
         const password = document.getElementById('login-password').value;
         const errEl = document.getElementById('login-error');
+        errEl.textContent = '';
 
         if (!account) { errEl.textContent = '请输入账号'; return; }
         if (!password) { errEl.textContent = '请输入密码'; return; }
 
-        const result = Store.login(account, password);
-        if (!result.ok) {
-            errEl.textContent = result.msg;
-            return;
-        }
-
-        // 登录成功
-        enterApp();
+        errEl.textContent = '登录中…';
+        const r = await unifiedAuth(account, password, false, '');
+        if (r.ok) { enterApp(); return; }
+        errEl.textContent = r.message;
     });
 
-    // 注册
-    document.getElementById('register-form').addEventListener('submit', (e) => {
+    // 注册（云端优先，自动同步多设备）
+    document.getElementById('register-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const nickname = document.getElementById('reg-nickname').value.trim();
         const account = document.getElementById('reg-account').value.trim();
         const password = document.getElementById('reg-password').value;
         const errEl = document.getElementById('register-error');
+        errEl.textContent = '';
 
         if (!nickname) { errEl.textContent = '请输入昵称'; return; }
         if (!account) { errEl.textContent = '请输入账号'; return; }
         if (!password || password.length < 4) { errEl.textContent = '密码至少4位'; return; }
 
-        const result = Store.register(account, password, nickname);
-        if (!result.ok) {
-            errEl.textContent = result.msg;
-            return;
-        }
-
-        // 自动登录
-        Store.setSession(account);
-        enterApp();
+        errEl.textContent = '注册中…';
+        const r = await unifiedAuth(account, password, true, nickname);
+        if (r.ok) { enterApp(); return; }
+        errEl.textContent = r.message;
     });
 
     /* --- 底部导航 --- */
@@ -1851,6 +1955,7 @@ function bindEvents() {
                 if (imported.length === 0) { Toast.show('没有有效的记录可导入'); return; }
                 if (confirm(`确定导入 ${imported.length} 条记录吗？\n（与本地记录按编号合并，不会丢失本地已有数据）`)) {
                     Store.mergeImported(imported);
+                    scheduleCloudSync();
                     Toast.show(`已导入 ${imported.length} 条记录`, { type: 'success' });
                     if (document.getElementById('history-view').classList.contains('active')) PageHistory.render();
                     if (document.getElementById('analysis-view')) PageAnalysis.render();
@@ -1901,6 +2006,7 @@ function bindEvents() {
         const ok = await Confirm.show('确定要删除这条成绩记录吗？\n删除后不可恢复。');
         if (ok) {
             Store.deleteRecord(id);
+            scheduleCloudSync();
             ModalDetail.hide();
             Toast.show('记录已删除', { type: 'success' });
             // 刷新当前页面
@@ -1947,6 +2053,8 @@ function init() {
     const user = Store.getCurrentUser();
     if (user) {
         enterApp();
+        // 已本地登录但云端未连：后台尝试把账号迁移到云端（多设备同步）
+        autoCloudMigrate();
     } else {
         document.getElementById('auth-view').classList.add('active');
     }
