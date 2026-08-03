@@ -1,5 +1,5 @@
 // SwimTrack Service Worker —— 可「添加到主屏幕」并离线打开
-const CACHE = 'swimtrack-v2';
+const CACHE = 'swimtrack-v3';
 const APP_SHELL = [
     './',
     './index.html',

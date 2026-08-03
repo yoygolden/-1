@@ -18,6 +18,9 @@
     /* 蝶泳紫（蝴蝶） */
     --grape: #A78BFA;
     --grape-bg: #EDE9FE;
+    /* 混合泳玫红（全能） */
+    --rose: #F472B6;
+    --rose-bg: #FCE7F3;
     /* 辅助色 */
     --sun: #FBBF24;
     --pink: #F472B6;
@@ -367,6 +370,7 @@ body::before {
 .breaststroke-bg { background: var(--mint-bg); color: #059669; }
 .backstroke-bg { background: var(--coral-bg); color: #EA580C; }
 .butterfly-bg { background: var(--grape-bg); color: #7C3AED; }
+.medley-bg { background: var(--rose-bg); color: #DB2777; }
 
 /* 泳姿分布 */
 .stroke-distribution { background: var(--card); border-radius: var(--r-lg); padding: 16px; box-shadow: var(--shadow-sm); border: 2px solid var(--line-soft); }
@@ -435,6 +439,7 @@ body::before {
 .option-btn.stroke-breaststroke.selected { background: linear-gradient(135deg, var(--mint) 0%, #059669 100%); }
 .option-btn.stroke-backstroke.selected { background: var(--coral); }
 .option-btn.stroke-butterfly.selected { background: linear-gradient(135deg, var(--grape) 0%, #7C3AED 100%); }
+.option-btn.stroke-medley.selected { background: linear-gradient(135deg, var(--rose) 0%, #DB2777 100%); }
 
 .distance-options { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 9px; }
 .distance-options .option-btn { font-size: 14px; padding: 12px 4px; }

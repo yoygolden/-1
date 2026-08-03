@@ -385,7 +385,8 @@ const Utils = {
             '自由泳': { bg: 'var(--sky-bg)', color: 'var(--sky-deep)', class: 'freestyle', emoji: '🐬', animal: '海豚' },
             '蛙泳': { bg: 'var(--mint-bg)', color: '#059669', class: 'breaststroke', emoji: '🐸', animal: '青蛙' },
             '仰泳': { bg: 'var(--coral-bg)', color: '#EA580C', class: 'backstroke', emoji: '🦦', animal: '水獭' },
-            '蝶泳': { bg: 'var(--grape-bg)', color: '#7C3AED', class: 'butterfly', emoji: '🦋', animal: '蝴蝶' }
+            '蝶泳': { bg: 'var(--grape-bg)', color: '#7C3AED', class: 'butterfly', emoji: '🦋', animal: '蝴蝶' },
+            '混合泳': { bg: 'var(--rose-bg)', color: '#DB2777', class: 'medley', emoji: '🌈', animal: '全能' }
         };
         return map[stroke] || map['自由泳'];
     },
@@ -560,7 +561,7 @@ const PageHome = {
 
     renderBestCards(records) {
         const container = document.getElementById('home-best-cards');
-        const strokes = ['自由泳', '蛙泳', '仰泳', '蝶泳'];
+        const strokes = ['自由泳', '蛙泳', '仰泳', '蝶泳', '混合泳'];
         const distances = [50, 100, 200, 400, 800, 1500];
 
         // 对每个泳姿找最佳成绩
@@ -625,7 +626,8 @@ const PageHome = {
             { name: '自由泳', class: 'freestyle' },
             { name: '蛙泳', class: 'breaststroke' },
             { name: '仰泳', class: 'backstroke' },
-            { name: '蝶泳', class: 'butterfly' }
+            { name: '蝶泳', class: 'butterfly' },
+            { name: '混合泳', class: 'medley' }
         ];
         const counts = {};
         strokes.forEach(s => counts[s.name] = 0);
