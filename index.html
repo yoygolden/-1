@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="format-detection" content="telephone=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="theme-color" content="#0ea5e9">
+    <meta name="x5-page-mode" content="app">
+    <meta name="x5-fullscreen" content="true">
+
+    <!-- PWA / 添加到主屏幕 -->
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+    <meta name="apple-mobile-web-app-title" content="小鱼游泳">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <title>SwimTrack - 游泳成绩追踪</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div id="app">
+
+        <!-- ==================== 登录/注册页 ==================== -->
+        <div id="auth-view" class="view active">
+            <div class="auth-container">
+                <div class="auth-logo">
+                    <div class="auth-mascot">🐬</div>
+                    <h1>SwimTrack</h1>
+                    <p>动物城游泳俱乐部 · 记录每一次破浪</p>
+                </div>
+                <div class="auth-card">
+                    <div class="auth-tabs">
+                        <button class="auth-tab active" data-tab="login">登录</button>
+                        <button class="auth-tab" data-tab="register">注册</button>
+                    </div>
+                    <!-- 登录表单 -->
+                    <form id="login-form" class="auth-form active">
+                        <div class="form-group">
+                            <label>账号</label>
+                            <input type="text" id="login-account" placeholder="请输入账号" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label>密码</label>
+                            <input type="password" id="login-password" placeholder="请输入密码">
+                        </div>
+                        <p id="login-error" class="auth-error"></p>
+                        <button type="submit" class="btn-primary auth-submit">登 录</button>
+                    </form>
+                    <!-- 注册表单 -->
+                    <form id="register-form" class="auth-form">
+                        <div class="form-group">
+                            <label>昵称</label>
+                            <input type="text" id="reg-nickname" placeholder="给自己起个昵称" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label>账号</label>
+                            <input type="text" id="reg-account" placeholder="用于登录的账号" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label>密码</label>
+                            <input type="password" id="reg-password" placeholder="设置密码（至少4位）">
+                        </div>
+                        <p id="register-error" class="auth-error"></p>
+                        <button type="submit" class="btn-primary auth-submit">注 册</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== 主应用 ==================== -->
+        <div id="main-app" class="hidden">
+
+            <!-- ==================== 首页 ==================== -->
+            <div id="home-view" class="view">
+                <header class="page-header">
+                    <div class="greeting">
+                        <span id="home-greeting-text">你好</span>
+                        <span id="home-user-name" class="user-name"></span>
+                    </div>
+                    <div class="header-right">
+                        <span id="home-date" class="header-date"></span>
+                        <button class="icon-btn" id="go-profile-btn" title="个人中心">
+                            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="8" r="4"/>
+                                <path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8"/>
+                            </svg>
+                        </button>
+                    </div>
+                </header>
+
+                <div class="page-content">
+                    <!-- 核心数据卡片 -->
+                    <section class="stats-cards">
+                        <div class="stat-card">
+                            <div class="stat-icon stat-icon-blue">
+                                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12h20M2 6h20M2 18h20"/></svg>
+                            </div>
+                            <div class="stat-value" id="home-total-count">0</div>
+                            <div class="stat-label">总游泳次数</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon stat-icon-green">
+                                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20"/></svg>
+                            </div>
+                            <div class="stat-value" id="home-total-distance">0<span class="stat-unit">km</span></div>
+                            <div class="stat-label">累计游距</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon stat-icon-orange">
+                                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                            </div>
+                            <div class="stat-value" id="home-total-time">0<span class="stat-unit">h</span></div>
+                            <div class="stat-label">总用时</div>
+                        </div>
+                    </section>
+
+                    <!-- 本月统计 -->
+                    <section class="month-stats" id="month-stats-section">
+                        <div class="month-stat-item">
+                            <span class="month-stat-value" id="home-month-count">0</span>
+                            <span class="month-stat-label">本月次数</span>
+                        </div>
+                        <div class="month-divider"></div>
+                        <div class="month-stat-item">
+                            <span class="month-stat-value" id="home-month-distance">0<span class="stat-unit">km</span></span>
+                            <span class="month-stat-label">本月距离</span>
+                        </div>
+                    </section>
+
+                    <!-- 各泳姿最佳成绩 -->
+                    <section class="section-block">
+                        <div class="section-title">
+                            <h2>最佳成绩</h2>
+                        </div>
+                        <div class="best-cards" id="home-best-cards">
+                            <!-- JS填充 -->
+                        </div>
+                    </section>
+
+                    <!-- 泳姿分布 -->
+                    <section class="section-block">
+                        <div class="section-title">
+                            <h2>泳姿分布</h2>
+                        </div>
+                        <div class="stroke-distribution" id="home-stroke-distribution">
+                            <!-- JS填充 -->
+                        </div>
+                    </section>
+
+                    <!-- 最近记录 -->
+                    <section class="section-block">
+                        <div class="section-title">
+                            <h2>最近记录</h2>
+                            <button class="link-btn" id="home-view-all">查看全部</button>
+                        </div>
+                        <div class="recent-list" id="home-recent-list">
+                            <!-- JS填充 -->
+                        </div>
+                    </section>
+
+                    <div style="height: 100px;"></div>
+                </div>
+
+                <!-- 底部导航 -->
+                <nav class="bottom-nav">
+                    <button class="nav-item active" data-nav="home">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l9-9 9 9M5 10v10h14V10"/></svg>
+                        <span>首页</span>
+                    </button>
+                    <button class="nav-item" data-nav="history">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
+                        <span>记录</span>
+                    </button>
+                    <button class="nav-item" data-nav="analysis">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg>
+                        <span>分析</span>
+                    </button>
+                    <button class="nav-item" data-nav="gallery">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 5h-2V3H7v2H5a2 2 0 00-2 2v3a4 4 0 003.5 3.97V18a2 2 0 002 2h2v1h4v-1h2a2 2 0 002-2v-4.03A4 4 0 0021 10V7a2 2 0 00-2-2zM5 10V7h2v5.83A2 2 0 015 10zm14 0a2 2 0 01-2 2.83V7h2v3z"/></svg>
+                        <span>奖状墙</span>
+                    </button>
+                    <button class="nav-item" data-nav="profile">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>
+                        <span>我的</span>
+                    </button>
+                </nav>
+            </div>
+
+            <!-- ==================== 记录成绩页 ==================== -->
+            <div id="record-view" class="view">
+                <header class="page-header">
+                    <button class="icon-btn back-btn" id="record-back-btn">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+                    </button>
+                    <h1 class="page-title" id="record-page-title">记录成绩</h1>
+                    <div style="width: 40px;"></div>
+                </header>
+
+                <div class="page-content">
+                <form id="record-form" class="record-form">
+                    <!-- 成绩类型 -->
+                    <div class="form-section">
+                        <label class="form-section-label">成绩类型</label>
+                        <div class="type-options" id="type-options">
+                            <button type="button" class="option-btn type-training selected" data-type="training">🏊 训练成绩</button>
+                            <button type="button" class="option-btn type-competition" data-type="competition">🏆 比赛成绩</button>
+                        </div>
+                    </div>
+
+                    <!-- 赛事名称（仅比赛时显示） -->
+                    <div class="form-section" id="event-name-section" style="display:none;">
+                        <label class="form-section-label">赛事名称 <span class="optional">（选填）</span></label>
+                        <input type="text" id="event-name" class="modal-input" placeholder="如：市青少年游泳锦标赛 50米自由泳" maxlength="40">
+                    </div>
+
+                    <!-- 泳姿选择 -->
+                        <div class="form-section">
+                            <label class="form-section-label">泳姿</label>
+                            <div class="stroke-options" id="stroke-options">
+                                <button type="button" class="option-btn stroke-freestyle" data-stroke="自由泳">🐬 自由泳</button>
+                                <button type="button" class="option-btn stroke-breaststroke" data-stroke="蛙泳">🐸 蛙泳</button>
+                                <button type="button" class="option-btn stroke-backstroke" data-stroke="仰泳">🦦 仰泳</button>
+                                <button type="button" class="option-btn stroke-butterfly" data-stroke="蝶泳">🦋 蝶泳</button>
+                            </div>
+                        </div>
+
+                        <!-- 距离选择 -->
+                        <div class="form-section">
+                            <label class="form-section-label">距离</label>
+                            <div class="distance-options" id="distance-options">
+                                <button type="button" class="option-btn" data-distance="50">50米</button>
+                                <button type="button" class="option-btn" data-distance="100">100米</button>
+                                <button type="button" class="option-btn" data-distance="200">200米</button>
+                                <button type="button" class="option-btn" data-distance="400">400米</button>
+                                <button type="button" class="option-btn" data-distance="800">800米</button>
+                                <button type="button" class="option-btn" data-distance="1500">1500米</button>
+                            </div>
+                            <div class="custom-distance-row">
+                                <input type="number" id="custom-distance" placeholder="自定义距离（米）" min="1">
+                            </div>
+                        </div>
+
+                        <!-- 用时输入 -->
+                        <div class="form-section">
+                            <label class="form-section-label">用时</label>
+                            <div class="time-input-group">
+                                <div class="time-input-item">
+                                    <input type="number" id="time-min" placeholder="0" min="0" max="59" class="time-input">
+                                    <span class="time-label">分</span>
+                                </div>
+                                <span class="time-separator">:</span>
+                                <div class="time-input-item">
+                                    <input type="number" id="time-sec" placeholder="00" min="0" max="59" class="time-input">
+                                    <span class="time-label">秒</span>
+                                </div>
+                                <span class="time-separator">.</span>
+                                <div class="time-input-item">
+                                    <input type="number" id="time-ms" placeholder="00" min="0" max="99" class="time-input">
+                                    <span class="time-label">毫秒</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 日期选择 -->
+                        <div class="form-section">
+                            <label class="form-section-label">日期</label>
+                            <input type="date" id="record-date" class="date-input">
+                        </div>
+
+                        <!-- 备注 -->
+                        <div class="form-section">
+                            <label class="form-section-label">备注 <span class="optional">（选填）</span></label>
+                            <textarea id="record-note" class="note-input" placeholder="训练感受、场地信息等" rows="3"></textarea>
+                        </div>
+
+                        <div style="height: 80px;"></div>
+                    </form>
+
+                    <!-- 底部操作栏 -->
+                    <div class="bottom-action-bar">
+                        <button type="button" class="btn-secondary" id="record-cancel-btn">取消</button>
+                        <button type="button" class="btn-primary" id="record-save-btn">保 存</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ==================== 历史记录页 ==================== -->
+            <div id="history-view" class="view">
+                <header class="page-header">
+                    <h1 class="page-title">历史记录</h1>
+                    <button class="add-pill-btn" id="history-add-btn">
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+                        记录
+                    </button>
+                </header>
+
+                <div class="page-content">
+                    <!-- 筛选栏 -->
+                    <div class="filter-bar">
+                        <select id="filter-stroke" class="filter-select">
+                            <option value="">全部泳姿</option>
+                        <option value="自由泳">🐬 自由泳</option>
+                        <option value="蛙泳">🐸 蛙泳</option>
+                        <option value="仰泳">🦦 仰泳</option>
+                        <option value="蝶泳">🦋 蝶泳</option>
+                        </select>
+                        <select id="filter-distance" class="filter-select">
+                            <option value="">全部距离</option>
+                            <option value="50">50米</option>
+                            <option value="100">100米</option>
+                            <option value="200">200米</option>
+                            <option value="400">400米</option>
+                            <option value="800">800米</option>
+                            <option value="1500">1500米</option>
+                        </select>
+                    </div>
+
+                    <!-- 类型筛选 -->
+                    <div class="type-filter-chips" id="history-type-chips">
+                        <button class="chip active" data-type="">全部</button>
+                        <button class="chip" data-type="training">🏊 训练</button>
+                        <button class="chip" data-type="competition">🏆 比赛</button>
+                    </div>
+
+                    <!-- 统计 -->
+                    <div class="list-count" id="history-count">共 0 条记录</div>
+
+                    <!-- 记录列表 -->
+                    <div class="history-list" id="history-list">
+                        <!-- JS填充 -->
+                    </div>
+
+                    <div style="height: 100px;"></div>
+                </div>
+
+                <nav class="bottom-nav">
+                    <button class="nav-item" data-nav="home">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l9-9 9 9M5 10v10h14V10"/></svg>
+                        <span>首页</span>
+                    </button>
+                    <button class="nav-item active" data-nav="history">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
+                        <span>记录</span>
+                    </button>
+                    <button class="nav-item" data-nav="analysis">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg>
+                        <span>分析</span>
+                    </button>
+                    <button class="nav-item" data-nav="gallery">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 5h-2V3H7v2H5a2 2 0 00-2 2v3a4 4 0 003.5 3.97V18a2 2 0 002 2h2v1h4v-1h2a2 2 0 002-2v-4.03A4 4 0 0021 10V7a2 2 0 00-2-2zM5 10V7h2v5.83A2 2 0 015 10zm14 0a2 2 0 01-2 2.83V7h2v3z"/></svg>
+                        <span>奖状墙</span>
+                    </button>
+                    <button class="nav-item" data-nav="profile">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>
+                        <span>我的</span>
+                    </button>
+                </nav>
+            </div>
+
+            <!-- ==================== 成绩分析页 ==================== -->
+            <div id="analysis-view" class="view">
+                <header class="page-header">
+                    <h1 class="page-title">成绩分析</h1>
+                    <div style="width: 40px;"></div>
+                </header>
+
+                <div class="page-content">
+                    <!-- 项目选择器 -->
+                    <div class="analysis-selector">
+                        <select id="analysis-stroke" class="filter-select">
+                        <option value="自由泳">🐬 自由泳</option>
+                        <option value="蛙泳">🐸 蛙泳</option>
+                        <option value="仰泳">🦦 仰泳</option>
+                        <option value="蝶泳">🦋 蝶泳</option>
+                        </select>
+                        <select id="analysis-distance" class="filter-select">
+                            <option value="50">50米</option>
+                            <option value="100">100米</option>
+                            <option value="200">200米</option>
+                            <option value="400">400米</option>
+                            <option value="800">800米</option>
+                            <option value="1500">1500米</option>
+                        </select>
+                    </div>
+
+                    <!-- 类型筛选 -->
+                    <div class="type-filter-chips" id="analysis-type-chips">
+                        <button class="chip active" data-type="">全部</button>
+                        <button class="chip" data-type="training">🏊 训练</button>
+                        <button class="chip" data-type="competition">🏆 比赛</button>
+                    </div>
+
+                    <!-- 时间范围切换 -->
+                    <div class="time-range-tabs" id="time-range-tabs">
+                        <button class="range-tab active" data-range="1m">近一月</button>
+                        <button class="range-tab" data-range="3m">近三月</button>
+                        <button class="range-tab" data-range="6m">近半年</button>
+                        <button class="range-tab" data-range="all">全部</button>
+                    </div>
+
+                    <!-- 趋势图 -->
+                    <div class="chart-container">
+                        <canvas id="trend-chart"></canvas>
+                    </div>
+
+                    <!-- 无数据提示 -->
+                    <div class="no-data-chart" id="no-data-chart" style="display:none;">
+                        <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="#cbd5e1" stroke-width="1.5"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg>
+                        <p>该项目暂无记录</p>
+                        <p class="no-data-sub">去记录第一条成绩吧</p>
+                    </div>
+
+                    <!-- 进步状态卡片 -->
+                    <div class="progress-card" id="progress-card">
+                        <!-- JS填充 -->
+                    </div>
+
+                    <!-- 数据摘要 -->
+                    <div class="data-summary" id="data-summary">
+                        <!-- JS填充 -->
+                    </div>
+
+                    <div style="height: 100px;"></div>
+                </div>
+
+                <nav class="bottom-nav">
+                    <button class="nav-item" data-nav="home">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l9-9 9 9M5 10v10h14V10"/></svg>
+                        <span>首页</span>
+                    </button>
+                    <button class="nav-item" data-nav="history">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
+                        <span>记录</span>
+                    </button>
+                    <button class="nav-item active" data-nav="analysis">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg>
+                        <span>分析</span>
+                    </button>
+                    <button class="nav-item" data-nav="gallery">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 5h-2V3H7v2H5a2 2 0 00-2 2v3a4 4 0 003.5 3.97V18a2 2 0 002 2h2v1h4v-1h2a2 2 0 002-2v-4.03A4 4 0 0021 10V7a2 2 0 00-2-2zM5 10V7h2v5.83A2 2 0 015 10zm14 0a2 2 0 01-2 2.83V7h2v3z"/></svg>
+                        <span>奖状墙</span>
+                    </button>
+                    <button class="nav-item" data-nav="profile">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>
+                        <span>我的</span>
+                    </button>
+                </nav>
+            </div>
+
+            <!-- ==================== 个人中心页 ==================== -->
+            <div id="profile-view" class="view">
+                <header class="page-header">
+                    <h1 class="page-title">个人中心</h1>
+                    <div style="width: 40px;"></div>
+                </header>
+
+                <div class="page-content">
+                    <!-- 个人信息卡片 -->
+                    <div class="profile-card">
+                        <div class="profile-avatar" id="profile-avatar">A</div>
+                        <div class="profile-info">
+                            <div class="profile-name-row">
+                                <span id="profile-nickname" class="profile-nickname"></span>
+                                <button class="icon-btn" id="edit-nickname-btn">
+                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                </button>
+                            </div>
+                            <span id="profile-account" class="profile-account"></span>
+                        </div>
+                    </div>
+
+                    <!-- 数据统计摘要 -->
+                    <div class="profile-stats">
+                        <div class="profile-stat-item">
+                            <span class="profile-stat-value" id="profile-total-count">0</span>
+                            <span class="profile-stat-label">总次数</span>
+                        </div>
+                        <div class="profile-stat-item">
+                            <span class="profile-stat-value" id="profile-total-distance">0</span>
+                            <span class="profile-stat-label">总距离(km)</span>
+                        </div>
+                        <div class="profile-stat-item">
+                            <span class="profile-stat-value" id="profile-total-time">0</span>
+                            <span class="profile-stat-label">总时长(h)</span>
+                        </div>
+                    </div>
+
+                    <!-- 云端同步 -->
+                    <div class="cloud-card" id="cloud-card"></div>
+                    <input type="file" id="import-file" accept="application/json,.json" style="display:none">
+
+                    <!-- 功能列表 -->
+                    <div class="menu-list">
+                        <button class="menu-item" id="import-data-btn">
+                            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 8l5-5 5 5M12 3v12"/></svg>
+                            <span>数据导入</span>
+                            <svg class="menu-arrow" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+                        </button>
+                        <button class="menu-item" id="export-data-btn">
+                            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                            <span>数据导出</span>
+                            <svg class="menu-arrow" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+                        </button>
+                        <button class="menu-item" id="about-btn">
+                            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+                            <span>关于应用</span>
+                            <svg class="menu-arrow" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+                        </button>
+                        <button class="menu-item" id="feedback-btn">
+                            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>
+                            <span>意见反馈</span>
+                            <svg class="menu-arrow" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+                        </button>
+                    </div>
+
+                    <!-- 退出登录 -->
+                    <button class="logout-btn" id="logout-btn">退出登录</button>
+
+                    <div class="app-version">SwimTrack v1.0.0</div>
+
+                    <div style="height: 100px;"></div>
+                </div>
+
+                <nav class="bottom-nav">
+                    <button class="nav-item" data-nav="home">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l9-9 9 9M5 10v10h14V10"/></svg>
+                        <span>首页</span>
+                    </button>
+                    <button class="nav-item" data-nav="history">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
+                        <span>记录</span>
+                    </button>
+                    <button class="nav-item" data-nav="analysis">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg>
+                        <span>分析</span>
+                    </button>
+                    <button class="nav-item" data-nav="gallery">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 5h-2V3H7v2H5a2 2 0 00-2 2v3a4 4 0 003.5 3.97V18a2 2 0 002 2h2v1h4v-1h2a2 2 0 002-2v-4.03A4 4 0 0021 10V7a2 2 0 00-2-2zM5 10V7h2v5.83A2 2 0 015 10zm14 0a2 2 0 01-2 2.83V7h2v3z"/></svg>
+                        <span>奖状墙</span>
+                    </button>
+                    <button class="nav-item active" data-nav="profile">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>
+                        <span>我的</span>
+                    </button>
+                </nav>
+            </div>
+
+            <!-- ==================== 奖状墙页 ==================== -->
+            <div id="gallery-view" class="view">
+                <header class="page-header">
+                    <h1 class="page-title">奖状墙</h1>
+                    <button class="add-pill-btn" id="gallery-add-btn">
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+                        上传
+                    </button>
+                </header>
+
+                <div class="page-content">
+                    <!-- 分类标签 -->
+                    <div class="type-filter-chips" id="gallery-tabs">
+                        <button class="chip active" data-kind="">全部</button>
+                        <button class="chip" data-kind="cert">🏆 奖状</button>
+                        <button class="chip" data-kind="photo">📷 照片</button>
+                    </div>
+
+                    <div class="list-count" id="gallery-count">共 0 张</div>
+
+                    <!-- 奖状墙网格 -->
+                    <div class="gallery-grid" id="gallery-grid">
+                        <!-- JS填充 -->
+                    </div>
+
+                    <div style="height: 100px;"></div>
+                </div>
+
+                <nav class="bottom-nav">
+                    <button class="nav-item" data-nav="home">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l9-9 9 9M5 10v10h14V10"/></svg>
+                        <span>首页</span>
+                    </button>
+                    <button class="nav-item" data-nav="history">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
+                        <span>记录</span>
+                    </button>
+                    <button class="nav-item" data-nav="analysis">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg>
+                        <span>分析</span>
+                    </button>
+                    <button class="nav-item active" data-nav="gallery">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 5h-2V3H7v2H5a2 2 0 00-2 2v3a4 4 0 003.5 3.97V18a2 2 0 002 2h2v1h4v-1h2a2 2 0 002-2v-4.03A4 4 0 0021 10V7a2 2 0 00-2-2zM5 10V7h2v5.83A2 2 0 015 10zm14 0a2 2 0 01-2 2.83V7h2v3z"/></svg>
+                        <span>奖状墙</span>
+                    </button>
+                    <button class="nav-item" data-nav="profile">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>
+                        <span>我的</span>
+                    </button>
+                </nav>
+            </div>
+
+        </div><!-- /main-app -->
+
+        <!-- ==================== 详情弹窗 ==================== -->
+        <div id="detail-modal" class="modal-overlay">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>成绩详情</h3>
+                    <button class="modal-close" id="detail-close">
+                        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                    </button>
+                </div>
+                <div class="modal-body" id="detail-body">
+                    <!-- JS填充 -->
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-danger-outline" id="detail-delete-btn">删除</button>
+                    <button class="btn-primary" id="detail-edit-btn">编辑</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== 确认弹窗 ==================== -->
+        <div id="confirm-modal" class="modal-overlay">
+            <div class="modal-content modal-small">
+                <div class="modal-body">
+                    <p id="confirm-message" class="confirm-message">确认操作？</p>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-secondary" id="confirm-cancel">取消</button>
+                    <button class="btn-danger" id="confirm-ok">确认</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== Toast 提示 ==================== -->
+        <div id="toast" class="toast"></div>
+
+        <!-- ==================== 编辑昵称弹窗 ==================== -->
+        <div id="nickname-modal" class="modal-overlay">
+            <div class="modal-content modal-small">
+                <div class="modal-header">
+                    <h3>修改昵称</h3>
+                </div>
+                <div class="modal-body">
+                    <input type="text" id="nickname-input" class="modal-input" placeholder="请输入新昵称" maxlength="20">
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-secondary" id="nickname-cancel">取消</button>
+                    <button class="btn-primary" id="nickname-save">保存</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== 关于弹窗 ==================== -->
+        <div id="about-modal" class="modal-overlay">
+            <div class="modal-content modal-small">
+                <div class="modal-header">
+                    <h3>关于 SwimTrack</h3>
+                    <button class="modal-close" id="about-close">
+                        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="about-content">
+                        <div class="about-logo">SwimTrack</div>
+                        <p>版本 1.0.0</p>
+                        <p>记录每一次破浪前行。</p>
+                        <p class="about-desc">SwimTrack 是一款专为游泳爱好者设计的成绩追踪应用，帮助你记录每次训练数据、分析进步趋势、见证自己的成长。</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== 反馈弹窗 ==================== -->
+        <div id="feedback-modal" class="modal-overlay">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>意见反馈</h3>
+                    <button class="modal-close" id="feedback-close">
+                        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <textarea id="feedback-text" class="note-input" placeholder="说说你的建议或遇到的问题..." rows="5"></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-primary" id="feedback-submit">提交反馈</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== 奖状墙：上传弹窗 ==================== -->
+        <div id="gallery-upload-modal" class="modal-overlay">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>上传到奖状墙</h3>
+                    <button class="modal-close" id="gallery-upload-close">
+                        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-section">
+                        <label class="form-section-label">类型</label>
+                        <div class="type-options" id="upload-type-options">
+                            <button type="button" class="option-btn type-cert selected" data-ukind="cert">🏆 奖状</button>
+                            <button type="button" class="option-btn type-photo" data-ukind="photo">📷 照片</button>
+                        </div>
+                    </div>
+                    <div class="form-section">
+                        <label class="form-section-label">标题 <span class="optional">（选填）</span></label>
+                        <input type="text" id="upload-title" class="modal-input" placeholder="如：2026春季赛 50米自由泳 第一名" maxlength="40">
+                    </div>
+                    <div class="form-section">
+                        <label class="form-section-label">选择图片</label>
+                        <label class="upload-drop" id="upload-drop">
+                            <input type="file" id="upload-file" accept="image/*" hidden>
+                            <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+                            <span>点击选择奖状或照片</span>
+                        </label>
+                        <div id="upload-preview" class="upload-preview hidden"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-secondary" id="gallery-upload-cancel">取消</button>
+                    <button class="btn-primary" id="gallery-upload-save">保存</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== 奖状墙：预览弹窗 ==================== -->
+        <div id="gallery-preview-modal" class="modal-overlay">
+            <div class="modal-content modal-large">
+                <div class="modal-header">
+                    <h3 id="preview-title">详情</h3>
+                    <button class="modal-close" id="gallery-preview-close">
+                        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                    </button>
+                </div>
+                <div class="modal-body" style="text-align:center;">
+                    <img id="preview-img" class="preview-img" src="" alt="">
+                    <div id="preview-meta" class="preview-meta"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-danger-outline" id="gallery-preview-delete">删除</button>
+                    <button class="btn-primary" id="gallery-preview-close-btn">关闭</button>
+                </div>
+            </div>
+        </div>
+
+    </div><!-- /app -->
+    <script src="app.js"></script>
+</body>
+</html>
