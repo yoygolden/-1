@@ -1,10 +1,11 @@
-// SwimTrack Service Worker —— 让应用可「添加到主屏幕」并离线打开
-const CACHE = 'swimtrack-v1';
+// SwimTrack Service Worker —— 可「添加到主屏幕」并离线打开
+const CACHE = 'swimtrack-v2';
 const APP_SHELL = [
     './',
     './index.html',
     './styles.css',
     './app.js',
+    './vendor/chart.umd.min.js',
     './manifest.webmanifest',
     './icons/icon-192.png',
     './icons/icon-512.png',
@@ -12,14 +13,14 @@ const APP_SHELL = [
     './icons/apple-touch-icon.png'
 ];
 
-// 安装：预缓存应用外壳
+// 安装：预缓存应用外壳，并立即激活新版本（skipWaiting 让更新尽快生效）
 self.addEventListener('install', (event) => {
     event.waitUntil(
         caches.open(CACHE).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting())
     );
 });
 
-// 激活：清理旧缓存
+// 激活：清理旧缓存（v1 等），并接管所有已打开的页面
 self.addEventListener('activate', (event) => {
     event.waitUntil(
         caches.keys().then((keys) =>
@@ -28,49 +29,22 @@ self.addEventListener('activate', (event) => {
     );
 });
 
-// 拦截请求
+// 拦截请求：全局「网络优先」
+// 在线时永远拉取最新文件，避免旧缓存导致功能异常（例如登录误走本地而非云端）。
+// 离线时回退到缓存，保证仍可打开应用。
 self.addEventListener('fetch', (event) => {
     const req = event.request;
-    if (req.method !== 'GET') return;
-
+    if (req.method !== 'GET') return; // 不拦截 POST（/api 写入类请求直接走网络）
     const url = new URL(req.url);
 
-    // 1) 页面导航：网络优先，失败回退缓存（保证离线也能打开）
-    if (req.mode === 'navigate') {
-        event.respondWith(
-            fetch(req).then((res) => {
-                const copy = res.clone();
-                caches.open(CACHE).then((c) => c.put('./index.html', copy));
-                return res;
-            }).catch(() => caches.match('./index.html').then((r) => r || caches.match('./')))
-        );
-        return;
-    }
-
-    // 2) 同域名静态资源：缓存优先 + 后台更新
-    if (url.origin === self.location.origin) {
-        event.respondWith(
-            caches.match(req).then((cached) => {
-                const network = fetch(req).then((res) => {
-                    const copy = res.clone();
-                    caches.open(CACHE).then((c) => c.put(req, copy));
-                    return res;
-                }).catch(() => cached);
-                return cached || network;
-            })
-        );
-        return;
-    }
-
-    // 3) 第三方（如 Chart.js CDN）：运行时缓存，首次联网后离线可用
     event.respondWith(
-        caches.match(req).then((cached) => {
-            if (cached) return cached;
-            return fetch(req).then((res) => {
+        fetch(req).then((res) => {
+            // 仅缓存同源的成功响应，供离线兜底
+            if (res && res.ok && url.origin === self.location.origin) {
                 const copy = res.clone();
                 caches.open(CACHE).then((c) => c.put(req, copy));
-                return res;
-            }).catch(() => cached);
-        })
+            }
+            return res;
+        }).catch(() => caches.match(req).then((r) => r || caches.match('./index.html')))
     );
 });
