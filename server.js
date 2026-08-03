@@ -13,7 +13,8 @@ const path = require('path');
 
 const PORT = process.env.PORT || 3000;
 const ROOT = __dirname;
-const DATA_DIR = path.join(ROOT, 'data');
+// 数据目录：默认 ./data；在 Railway/Render 挂了持久磁盘时，把 DATA_DIR 指到挂载点（如 /data）即可永久保存
+const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, 'data');
 const STORE_FILE = path.join(DATA_DIR, 'store.json');
 
 // ---------- 数据持久化 ----------
