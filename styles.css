@@ -45,8 +45,8 @@
     --r-pill: 999px;
 
     /* 字体 */
-    /* 中文标题保留卡通字体；数字改用正常字体，提升可读性 */
-    --font-fun: 'ZCOOL KuaiLe', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    /* ZCOOL KuaiLe 为可选增强（需设备自行安装）；未加载时回退到各平台自带圆体，中国设备均可用，且不依赖外部网络 */
+    --font-fun: 'ZCOOL KuaiLe', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Heiti SC', 'WenQuanYi Micro Hei', sans-serif;
     --font-body: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
     --font-num: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
 

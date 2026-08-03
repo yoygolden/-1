@@ -267,6 +267,6 @@ const server = http.createServer((req, res) => {
     serveStatic(req, res, url.pathname);
 });
 
-server.listen(PORT, () => {
-    console.log(`SwimTrack server running on http://localhost:${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`SwimTrack server running on http://0.0.0.0:${PORT}`);
 });
