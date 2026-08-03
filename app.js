@@ -868,7 +868,18 @@ const PageRecord = {
                 Toast.show('成绩已记录！', { type: 'success' });
             }
 
-            setTimeout(() => Router.navigate('home'), 1200);
+            // 新增成功后停留在记录页，方便连续录入：
+            // 保留泳姿/距离/类型选择，仅清空本次输入的时间与备注
+            this.editingId = null;
+            document.getElementById('record-page-title').textContent = '记录成绩';
+            document.getElementById('time-min').value = '';
+            document.getElementById('time-sec').value = '';
+            document.getElementById('time-ms').value = '';
+            document.getElementById('record-note').value = '';
+            document.getElementById('event-name').value = '';
+            this.updateStrokeUI();
+            this.updateDistanceUI();
+            this.updateTypeUI();
         }
     }
 };
