@@ -18,8 +18,8 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <title>SwimTrack - 游泳成绩追踪</title>
     <!-- Chart.js 已本地自托管（vendor/chart.umd.min.js），不再依赖被墙的 CDN -->
-    <link rel="stylesheet" href="styles.css?v=7">
-    <script src="vendor/chart.umd.min.js?v=7"></script>
+    <link rel="stylesheet" href="styles.css?v=9">
+    <script src="vendor/chart.umd.min.js?v=9"></script>
 </head>
 <body>
     <div id="app">
@@ -101,6 +101,13 @@
                             </div>
                             <div class="stat-value" id="home-total-count">0</div>
                             <div class="stat-label">总游泳次数</div>
+                        </div>
+                    </section>
+
+                    <!-- 每日打卡 / 积分 / 盲盒 -->
+                    <section class="section-block checkin-section">
+                        <div class="checkin-card" id="checkin-card">
+                            <!-- JS 填充 -->
                         </div>
                     </section>
 
@@ -562,6 +569,7 @@
                         <button class="chip active" data-kind="">全部</button>
                         <button class="chip" data-kind="cert">🏆 奖状</button>
                         <button class="chip" data-kind="photo">📷 照片</button>
+                        <button class="chip" data-kind="blindbox">🎁 盲盒</button>
                     </div>
 
                     <div class="list-count" id="gallery-count">共 0 张</div>
@@ -628,6 +636,22 @@
                 <div class="modal-footer">
                     <button class="btn-secondary" id="confirm-cancel">取消</button>
                     <button class="btn-danger" id="confirm-ok">确认</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== 抽盲盒结果弹窗 ==================== -->
+        <div id="blindbox-result-modal" class="modal-overlay">
+            <div class="modal-content modal-small blindbox-result-content">
+                <div class="blindbox-result-card">
+                    <div class="blindbox-result-icon">🎁</div>
+                    <div class="blindbox-result-tag">普通款</div>
+                    <div class="blindbox-result-name">小金鱼贴纸</div>
+                    <div class="blindbox-result-sub">已收入奖状墙「盲盒」分类</div>
+                </div>
+                <div class="modal-footer blindbox-result-footer">
+                    <button class="btn-secondary" id="blindbox-result-close">收下</button>
+                    <button class="btn-primary" id="blindbox-result-goto">去奖状墙看看</button>
                 </div>
             </div>
         </div>
@@ -748,6 +772,6 @@
         </div>
 
     </div><!-- /app -->
-    <script src="app.js?v=7"></script>
+    <script src="app.js?v=9"></script>
 </body>
 </html>

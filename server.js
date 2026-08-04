@@ -20,9 +20,18 @@ const STORE_FILE = path.join(DATA_DIR, 'store.json');
 // ---------- 数据持久化 ----------
 function loadStore() {
     try {
-        return JSON.parse(fs.readFileSync(STORE_FILE, 'utf8'));
+        const s = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8'));
+        // 兼容旧数据：token(字符串) → tokens(数组)，支持同一账号多设备同时登录
+        if (s && s.users) {
+            for (const acc in s.users) {
+                const u = s.users[acc];
+                if (u && typeof u.token === 'string') { u.tokens = [u.token]; delete u.token; }
+                if (!Array.isArray(u.tokens)) u.tokens = [];
+            }
+        }
+        return s;
     } catch {
-        return { users: {} }; // users[account] = { account, salt, hash, nickname, token, records: [] }
+        return { users: {} }; // users[account] = { account, salt, hash, tokens:[], nickname, records: [] }
     }
 }
 let store = loadStore();
@@ -68,7 +77,8 @@ function getUserByToken(req) {
     const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
     if (!token) return null;
     for (const acc in store.users) {
-        if (store.users[acc].token === token) return store.users[acc];
+        const u = store.users[acc];
+        if (Array.isArray(u.tokens) && u.tokens.includes(token)) return u;
     }
     return null;
 }
@@ -122,7 +132,8 @@ async function handleApi(req, res, url) {
         const token = newToken();
         store.users[b.account] = {
             account: b.account,
-            salt, hash, token,
+            salt, hash,
+            tokens: [token],
             nickname: b.nickname || b.account,
             records: []
         };
@@ -137,9 +148,13 @@ async function handleApi(req, res, url) {
         if (!u) return send(res, 401, { error: '账号不存在' });
         const { hash } = hashPassword(b.password, u.salt);
         if (hash !== u.hash) return send(res, 401, { error: '密码错误' });
-        u.token = newToken();
+        // 追加新 token，不覆盖旧设备会话（多设备同时在线同步）
+        u.tokens = Array.isArray(u.tokens) ? u.tokens : [];
+        const token = newToken();
+        u.tokens.push(token);
+        if (u.tokens.length > 5) u.tokens = u.tokens.slice(-5); // 保留最近 5 台设备的会话
         saveStore();
-        return send(res, 200, { token: u.token, nickname: u.nickname, account: u.account });
+        return send(res, 200, { token: token, nickname: u.nickname, account: u.account });
     }
 
     // 以下接口需要登录

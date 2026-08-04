@@ -144,6 +144,38 @@ const Store = {
             });
             user.records = Object.values(map);
         });
+    },
+
+    /* ---------- 打卡 / 积分 / 盲盒 ---------- */
+    getCheckins() {
+        const u = this.getCurrentUser();
+        return u ? (u.checkins || []) : [];
+    },
+    addCheckin(entry) {
+        this.updateUser(u => {
+            u.checkins = u.checkins || [];
+            u.checkins.push(entry);
+        });
+    },
+    getPoints() {
+        const u = this.getCurrentUser();
+        return u ? (u.points || 0) : 0;
+    },
+    addPoints(n) {
+        this.updateUser(u => { u.points = (u.points || 0) + n; });
+    },
+    spendPoints(n) {
+        this.updateUser(u => { u.points = Math.max(0, (u.points || 0) - n); });
+    },
+    getBlindBoxes() {
+        const u = this.getCurrentUser();
+        return u ? (u.blindBoxes || []) : [];
+    },
+    addBlindBox(item) {
+        this.updateUser(u => {
+            u.blindBoxes = u.blindBoxes || [];
+            u.blindBoxes.push(item);
+        });
     }
 };
 
@@ -175,7 +207,11 @@ const CloudAPI = {
         try { data = JSON.parse(text); } catch (e) {
             throw new Error('云端服务暂不可用（当前访问环境未部署后端服务）');
         }
-        if (!res.ok) throw new Error(data.error || ('请求失败 (' + res.status + ')'));
+        if (!res.ok) {
+            const err = new Error(data.error || ('请求失败 (' + res.status + ')'));
+            err.status = res.status; // 透传状态码，便于识别 401 失效并重连
+            throw err;
+        }
         return data;
     },
 
@@ -195,6 +231,7 @@ const CloudAPI = {
 /* ==================== 统一登录（云端优先 + 本地兜底 + 自动迁移） ==================== */
 // 记录变更后，若已登录云端，防抖把本地记录同步到后端（失败静默）
 let _syncTimer = null;
+let _lastSyncCount = -1; // 记录最近一次同步后的本地记录数，用于判断是否需要刷新页面
 function scheduleCloudSync() {
     if (!CloudAPI.connected) return;
     if (_syncTimer) clearTimeout(_syncTimer);
@@ -203,32 +240,26 @@ function scheduleCloudSync() {
     }, 600);
 }
 
-// 把本地账号的会话/数据对齐到云端：写云端会话、建本地用户、下载并合并记录、上传历史记录
-async function bindCloudSession(res, account, fallbackNickname) {
+// 把本地账号的会话/数据对齐到云端：写云端会话、建本地用户、双向同步记录
+async function bindCloudSession(res, account, fallbackNickname, password) {
     CloudAPI.token = res.token;
     CloudAPI.account = res.account;
     CloudAPI.nickname = res.nickname || fallbackNickname || account;
 
     const users = Store.getUsers();
     if (!users[account]) {
-        users[account] = { account, password: '', nickname: CloudAPI.nickname, createdAt: Date.now(), records: [] };
+        users[account] = { account, password: password || '', nickname: CloudAPI.nickname, createdAt: Date.now(), records: [] };
+        Store.saveUsers(users);
+    } else if (password) {
+        // 记住密码，便于 token 失效时静默重连（与本地登录一致，均为明文存储）
+        users[account].password = password;
         Store.saveUsers(users);
     }
     Store.setSession(account);
 
-    // 下载云端记录到本地缓存（云端优先，本地独有记录保留）
-    try {
-        const data = await CloudAPI.getRecords();
-        if (data && Array.isArray(data.records)) Store.mergeCloud(data.records);
-    } catch (e) {}
-
-    // 若本地有同名账号的历史记录，上传到云端（首次迁移，避免丢数据）
-    try {
-        const localUser = Store.getUsers()[account];
-        if (localUser && Array.isArray(localUser.records) && localUser.records.length) {
-            await CloudAPI.sync(localUser.records);
-        }
-    } catch (e) {}
+    // 登录后双向同步：先拉云端、再推本地，保证多设备数据一致
+    await syncNow();
+    _lastSyncCount = Store.getRecords().length;
 }
 
 // 统一登录/注册：优先云端（多设备同步），后端不可用时退回本地
@@ -262,7 +293,7 @@ async function unifiedAuth(account, password, isRegister, nickname) {
         }
     }
 
-    await bindCloudSession(res, account, nickname);
+    await bindCloudSession(res, account, nickname, password);
     return { ok: true };
 }
 
@@ -299,6 +330,68 @@ async function autoCloudMigrate() {
         if (cur && cur.id === 'home-page') PageHome.render();
         if (cur && cur.id === 'history-page') PageHistory.render();
     } catch (e) {}
+}
+
+// 用本地保存的密码静默重新登录（token 失效时恢复云端连接）
+async function reauthCloud() {
+    const account = Store.getSession();
+    if (!account) return false;
+    const user = Store.getUsers()[account];
+    if (!user || !user.password) return false;
+    try {
+        const res = await CloudAPI.login(account, user.password);
+        if (!res || !res.token) return false;
+        CloudAPI.token = res.token;
+        CloudAPI.account = res.account;
+        CloudAPI.nickname = res.nickname || user.nickname || account;
+        return true;
+    } catch (e) { return false; }
+}
+
+// 双向同步：先拉取云端记录合并到本地，再把本地独有记录推送到云端（按 id 合并，不丢数据）
+// 返回同步后的本地记录数；失败（含重连失败）返回 -1
+async function syncNow() {
+    if (!CloudAPI.connected) return -1;
+    try {
+        const data = await CloudAPI.getRecords();
+        if (data && Array.isArray(data.records)) Store.mergeCloud(data.records);
+        await CloudAPI.sync(Store.getRecords());
+        return Store.getRecords().length;
+    } catch (e) {
+        if (e && e.status === 401) {
+            const ok = await reauthCloud();
+            if (ok) {
+                try {
+                    const data = await CloudAPI.getRecords();
+                    if (data && Array.isArray(data.records)) Store.mergeCloud(data.records);
+                    await CloudAPI.sync(Store.getRecords());
+                    return Store.getRecords().length;
+                } catch (_) {}
+            }
+        }
+        return -1;
+    }
+}
+
+// 回到前台 / 定时：主动从云端拉取最新记录并刷新当前数据页（多设备实时可见）
+function onCloudRefresh() {
+    if (!CloudAPI.connected) return;
+    const authView = document.getElementById('auth-view');
+    if (authView && authView.classList.contains('active')) return;
+    syncNow().then((n) => {
+        if (n < 0) return;
+        if (n !== _lastSyncCount) {
+            _lastSyncCount = n;
+            const refreshers = {
+                home: () => PageHome.render(),
+                history: () => PageHistory.render(),
+                analysis: () => PageAnalysis.render()
+            };
+            if (refreshers[Router.current]) refreshers[Router.current]();
+        } else {
+            _lastSyncCount = n;
+        }
+    });
 }
 
 /* ==================== 工具函数 ==================== */
@@ -518,6 +611,37 @@ const Confirm = {
     }
 };
 
+/* ==================== 盲盒定义 ==================== */
+// 五种稀有度（权重从高到低），随机抽取
+const BLINDBOX_RARITIES = [
+    { key: 'common',    label: '普通款', weight: 50, color: '#94A3B8', icon: '🐟' },
+    { key: 'classic',   label: '经典款', weight: 30, color: '#2E9BFF', icon: '🏅' },
+    { key: 'rare',      label: '稀有款', weight: 15, color: '#A855F7', icon: '💎' },
+    { key: 'limited',   label: '限量款', weight: 4,  color: '#F59E0B', icon: '🔥' },
+    { key: 'collector', label: '典藏款', weight: 1,  color: '#E11D48', icon: '👑' }
+];
+const BLINDBOX_NAMES = {
+    common:   ['小金鱼贴纸', '水滴徽章', '泳圈挂件', '浪花书签', '泡泡贴纸'],
+    classic:  ['银色奖牌', '海豚吊坠', '经典泳帽', '蓝鲸摆件', '海星徽章'],
+    rare:     ['紫晶泳镜', '流星奖杯', '幻彩鱼尾', '星河徽章', '极光挂坠'],
+    limited:  ['烈焰限定卡', '黄金限定章', '霓虹限定牌', '极光限定盒', '星耀限定印'],
+    collector:['典藏王冠', '传奇金鳞', '永恒之泳', '创世之冠', '沧海遗珠']
+};
+const BLINDBOX_COST = 10; // 抽一次消耗积分
+
+function rollBlindBox() {
+    const total = BLINDBOX_RARITIES.reduce((s, r) => s + r.weight, 0);
+    let x = Math.random() * total;
+    let chosen = BLINDBOX_RARITIES[0];
+    for (const r of BLINDBOX_RARITIES) {
+        if (x < r.weight) { chosen = r; break; }
+        x -= r.weight;
+    }
+    const names = BLINDBOX_NAMES[chosen.key];
+    const name = names[Math.floor(Math.random() * names.length)];
+    return { rarity: chosen.key, label: chosen.label, color: chosen.color, icon: chosen.icon, name };
+}
+
 /* ==================== 页面：首页 ==================== */
 const PageHome = {
     render() {
@@ -536,6 +660,9 @@ const PageHome = {
         const totalTime = records.reduce((s, r) => s + r.timeMs, 0);
 
         document.getElementById('home-total-count').textContent = totalCount;
+
+        // 打卡 / 积分 / 盲盒
+        this.renderCheckin();
 
         // 进步情况分析
         this.renderProgressOverview(records);
@@ -558,6 +685,123 @@ const PageHome = {
 
         // 最近记录
         this.renderRecent(records);
+    },
+
+    _dateStr(d) {
+        return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    },
+
+    // 渲染打卡卡片（打卡天数、连续天数、积分、抽盲盒入口）
+    renderCheckin() {
+        const el = document.getElementById('checkin-card');
+        if (!el) return;
+        const today = Utils.todayStr();
+        const checkins = Store.getCheckins();
+        const doneToday = checkins.some(c => c.date === today);
+        const total = checkins.length;
+        const points = Store.getPoints();
+        const canDraw = points >= BLINDBOX_COST;
+
+        // 计算当前连续天数（截至今天）
+        let streak = 0;
+        const set = new Set(checkins.map(c => c.date));
+        const d = new Date();
+        while (set.has(this._dateStr(d))) {
+            streak++;
+            d.setDate(d.getDate() - 1);
+        }
+
+        el.innerHTML = `
+            <div class="checkin-top">
+                <div class="checkin-title">📅 每日打卡</div>
+                <div class="checkin-streak">🔥 连续 <b>${streak}</b> 天 · 累计 <b>${total}</b> 次</div>
+            </div>
+            <div class="checkin-points">
+                <span class="checkin-points-value">${points}</span>
+                <span class="checkin-points-label">积分（${BLINDBOX_COST} 分抽一次盲盒）</span>
+            </div>
+            <div class="checkin-actions">
+                <button class="btn-primary ${doneToday ? 'is-done' : ''}" id="checkin-btn" ${doneToday ? 'disabled' : ''}>
+                    ${doneToday ? '✅ 今日已打卡' : '☀️ 立即打卡 +积分'}
+                </button>
+                <button class="btn-secondary ${canDraw ? '' : 'is-disabled'}" id="draw-blindbox-btn" ${canDraw ? '' : 'disabled'}>
+                    🎁 抽盲盒（${BLINDBOX_COST}分）
+                </button>
+            </div>
+            ${doneToday ? '' : '<div class="checkin-tip">每天打卡都能获得积分，连续打卡积分更多，攒够 10 分就能抽盲盒 🎉</div>'}
+        `;
+
+        const btn = el.querySelector('#checkin-btn');
+        if (btn && !doneToday) btn.addEventListener('click', () => this.checkIn());
+        const drawBtn = el.querySelector('#draw-blindbox-btn');
+        if (drawBtn && canDraw) drawBtn.addEventListener('click', () => this.drawBlindBox());
+    },
+
+    // 打卡：次数越多（连续+累计）积分越多
+    checkIn() {
+        const today = Utils.todayStr();
+        const checkins = Store.getCheckins();
+        if (checkins.some(c => c.date === today)) {
+            Toast.show('今天已经打卡啦～');
+            return;
+        }
+        // 连续天数（截至昨天）
+        const set = new Set(checkins.map(c => c.date));
+        let streak = 1;
+        const d = new Date();
+        d.setDate(d.getDate() - 1);
+        while (set.has(this._dateStr(d))) { streak++; d.setDate(d.getDate() - 1); }
+        // 累计越多、连续越长，本次积分越多
+        const points = 5 + Math.floor(checkins.length / 5) + Math.min(streak - 1, 5);
+        Store.addPoints(points);
+        Store.addCheckin({ date: today, points, streak });
+        Toast.show('打卡成功 +' + points + ' 积分', { type: 'success', sub: '连续打卡 ' + streak + ' 天' });
+        this.renderCheckin();
+        this.render();
+    },
+
+    // 抽盲盒：消耗积分，随机稀有度
+    drawBlindBox() {
+        const points = Store.getPoints();
+        if (points < BLINDBOX_COST) {
+            Toast.show('积分不足，先去打卡攒积分吧～');
+            return;
+        }
+        Store.spendPoints(BLINDBOX_COST);
+        const rb = rollBlindBox();
+        const item = {
+            id: Utils.uid(),
+            account: Store.getSession(),
+            rarity: rb.rarity,
+            label: rb.label,
+            color: rb.color,
+            icon: rb.icon,
+            name: rb.name,
+            date: Utils.todayStr(),
+            createdAt: Date.now()
+        };
+        Store.addBlindBox(item);
+        this.renderCheckin();
+        this.showBlindBoxResult(item);
+    },
+
+    // 展示抽中结果（弹窗）
+    showBlindBoxResult(item) {
+        const modal = document.getElementById('blindbox-result-modal');
+        if (!modal) return;
+        const isTop = (item.rarity === 'limited' || item.rarity === 'collector');
+        modal.querySelector('.blindbox-result-icon').textContent = item.icon;
+        modal.querySelector('.blindbox-result-name').textContent = item.name;
+        const tag = modal.querySelector('.blindbox-result-tag');
+        tag.textContent = item.label;
+        tag.style.background = item.color;
+        const card = modal.querySelector('.blindbox-result-card');
+        card.style.borderColor = item.color;
+        card.style.boxShadow = '0 10px 40px ' + item.color + '55';
+        modal.querySelector('.blindbox-result-sub').textContent = isTop
+            ? '🎉 欧气爆棚！抽中高品质款式！'
+            : '已收入奖状墙「盲盒」分类';
+        modal.classList.add('active');
     },
 
     computeProgressOverview(records) {
@@ -1412,12 +1656,14 @@ const PageProfile = {
                 <div class="cloud-btn-row">
                     <button class="btn-primary" id="cloud-upload">⬆️ 上传到云端</button>
                     <button class="btn-secondary" id="cloud-download">⬇️ 从云端下载</button>
+                    <button class="btn-secondary" id="cloud-sync">🔄 同步</button>
                 </div>
                 <button class="cloud-logout" id="cloud-logout">退出云端账号</button>
                 <div class="cloud-msg" id="cloud-msg"></div>
             `;
             card.querySelector('#cloud-upload').addEventListener('click', () => this.cloudUpload(card));
             card.querySelector('#cloud-download').addEventListener('click', () => this.cloudDownload(card));
+            card.querySelector('#cloud-sync').addEventListener('click', () => this.cloudSync(card));
             card.querySelector('#cloud-logout').addEventListener('click', () => {
                 CloudAPI.token = null; CloudAPI.account = null; CloudAPI.nickname = null;
                 Toast.show('已退出云端', { type: 'success' });
@@ -1490,6 +1736,19 @@ const PageProfile = {
         } catch (e) {
             this.cloudMsg(card, e.message || '下载失败', true);
         }
+    },
+
+    async cloudSync(card) {
+        this.cloudMsg(card, '同步中…');
+        const n = await syncNow();
+        if (n < 0) { this.cloudMsg(card, '同步失败，请检查网络或重新登录', true); return; }
+        _lastSyncCount = n;
+        this.cloudMsg(card, `同步完成，当前共 ${n} 条记录`, false);
+        Toast.show('已与云端同步', { type: 'success' });
+        // 刷新当前数据页，立即看到另一端的最新记录
+        if (Router.current === 'home') PageHome.render();
+        else if (Router.current === 'history') PageHistory.render();
+        else if (Router.current === 'analysis') PageAnalysis.render();
     }
 };
 
@@ -1662,27 +1921,63 @@ const PageGallery = {
             c.classList.toggle('active', (c.dataset.kind || '') === this.currentKind);
         });
 
-        try {
-            this.items = await GalleryDB.getAll(account);
-        } catch (e) {
-            this.items = [];
+        // 盲盒分类：来源为本地收藏（非图片），且不允许上传
+        const isBlind = this.currentKind === 'blindbox';
+        const addBtn = document.getElementById('gallery-add-btn');
+        if (addBtn) addBtn.style.display = isBlind ? 'none' : '';
+
+        let list;
+        if (isBlind) {
+            list = Store.getBlindBoxes().slice().sort((a, b) => b.createdAt - a.createdAt);
+        } else {
+            try {
+                this.items = await GalleryDB.getAll(account);
+            } catch (e) {
+                this.items = [];
+            }
+            list = this.currentKind ? this.items.filter(i => i.kind === this.currentKind) : this.items;
         }
 
         const container = document.getElementById('gallery-grid');
         const countEl = document.getElementById('gallery-count');
-        const list = this.currentKind ? this.items.filter(i => i.kind === this.currentKind) : this.items;
         countEl.textContent = `共 ${list.length} 张`;
 
         if (list.length === 0) {
-            container.innerHTML = `
-                <div class="empty-state">
-                    <div style="font-size:46px;margin-bottom:8px;">🏆</div>
-                    <p>${this.currentKind === 'cert' ? '还没有奖状' : this.currentKind === 'photo' ? '还没有照片' : '奖状墙还是空的'}</p>
-                    <button class="empty-action" id="gallery-empty-add">＋ 上传第一张</button>
+            if (isBlind) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div style="font-size:46px;margin-bottom:8px;">🎁</div>
+                        <p>还没有盲盒，去首页打卡攒积分抽取吧～</p>
+                        <button class="empty-action" id="gallery-empty-gohome">☀️ 去首页打卡</button>
+                    </div>`;
+                const goBtn = document.getElementById('gallery-empty-gohome');
+                if (goBtn) goBtn.addEventListener('click', () => Router.navigate('home'));
+            } else {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div style="font-size:46px;margin-bottom:8px;">🏆</div>
+                        <p>${this.currentKind === 'cert' ? '还没有奖状' : this.currentKind === 'photo' ? '还没有照片' : '奖状墙还是空的'}</p>
+                        <button class="empty-action" id="gallery-empty-add">＋ 上传第一张</button>
+                    </div>
+                `;
+                const aBtn = document.getElementById('gallery-empty-add');
+                if (aBtn) aBtn.addEventListener('click', () => this.openUpload());
+            }
+            return;
+        }
+
+        if (isBlind) {
+            container.innerHTML = list.map(it => `
+                <div class="blindbox-item" data-id="${it.id}" style="--rc:${it.color}">
+                    <div class="blindbox-item-icon" style="color:${it.color}">${it.icon}</div>
+                    <div class="blindbox-item-tag" style="background:${it.color}">${it.label}</div>
+                    <div class="blindbox-item-name">${ModalDetail.escapeHtml(it.name)}</div>
+                    <div class="blindbox-item-date">${Utils.formatDate(it.date)}</div>
                 </div>
-            `;
-            const addBtn = document.getElementById('gallery-empty-add');
-            if (addBtn) addBtn.addEventListener('click', () => this.openUpload());
+            `).join('');
+            container.querySelectorAll('.blindbox-item').forEach(el => {
+                el.addEventListener('click', () => this.openBlindBoxPreview(el.dataset.id));
+            });
             return;
         }
 
@@ -1702,6 +1997,11 @@ const PageGallery = {
         container.querySelectorAll('.gallery-item').forEach(el => {
             el.addEventListener('click', () => this.openPreview(el.dataset.id));
         });
+    },
+
+    openBlindBoxPreview(id) {
+        const item = Store.getBlindBoxes().find(i => i.id === id);
+        if (item) PageHome.showBlindBoxResult(item);
     },
 
     openUpload() {
@@ -1886,6 +2186,16 @@ function bindEvents() {
             PageGallery.currentKind = chip.dataset.kind || '';
             PageGallery.render();
         });
+    });
+
+    // 抽盲盒结果弹窗
+    document.getElementById('blindbox-result-close').addEventListener('click', () => {
+        document.getElementById('blindbox-result-modal').classList.remove('active');
+    });
+    document.getElementById('blindbox-result-goto').addEventListener('click', () => {
+        document.getElementById('blindbox-result-modal').classList.remove('active');
+        PageGallery.currentKind = 'blindbox';
+        Router.navigate('gallery');
     });
 
     // 首页右上角个人中心
@@ -2182,6 +2492,13 @@ function init() {
     } else {
         document.getElementById('auth-view').classList.add('active');
     }
+
+    // 多设备同步：回到前台 / 窗口聚焦 / 每 30 秒主动从云端拉取最新记录
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') onCloudRefresh();
+    });
+    window.addEventListener('focus', onCloudRefresh);
+    setInterval(onCloudRefresh, 30000);
 }
 
 // DOM 就绪后初始化
