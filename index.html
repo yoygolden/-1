@@ -18,8 +18,8 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <title>SwimTrack - 游泳成绩追踪</title>
     <!-- Chart.js 已本地自托管（vendor/chart.umd.min.js），不再依赖被墙的 CDN -->
-    <link rel="stylesheet" href="styles.css?v=9">
-    <script src="vendor/chart.umd.min.js?v=9"></script>
+    <link rel="stylesheet" href="styles.css?v=10">
+    <script src="vendor/chart.umd.min.js?v=10"></script>
 </head>
 <body>
     <div id="app">
@@ -134,7 +134,7 @@
                         </div>
                     </section>
 
-                    <!-- 各泳姿最佳成绩 -->
+                    <!-- 各项目最佳成绩 -->
                     <section class="section-block">
                         <div class="section-title">
                             <h2>最佳成绩</h2>
@@ -144,10 +144,10 @@
                         </div>
                     </section>
 
-                    <!-- 泳姿分布 -->
+                    <!-- 项目分布 -->
                     <section class="section-block">
                         <div class="section-title">
-                            <h2>泳姿分布</h2>
+                            <h2>项目分布</h2>
                         </div>
                         <div class="stroke-distribution" id="home-stroke-distribution">
                             <!-- JS填充 -->
@@ -205,12 +205,22 @@
 
                 <div class="page-content">
                 <form id="record-form" class="record-form">
-                    <!-- 成绩类型 -->
+                    <!-- 运动项目 -->
                     <div class="form-section">
+                        <label class="form-section-label">运动项目</label>
+                        <div class="type-options" id="category-options">
+                            <button type="button" class="option-btn cat-swim selected" data-category="swim">🏊 游泳</button>
+                            <button type="button" class="option-btn cat-run" data-category="run">🏃 跑步</button>
+                            <button type="button" class="option-btn cat-rope" data-category="rope">🤾 跳绳</button>
+                        </div>
+                    </div>
+
+                    <!-- 成绩类型 -->
+                    <div class="form-section" id="type-section">
                         <label class="form-section-label">成绩类型</label>
                         <div class="type-options" id="type-options">
-                            <button type="button" class="option-btn type-training selected" data-type="training">🏊 训练成绩</button>
-                            <button type="button" class="option-btn type-competition" data-type="competition">🏆 比赛成绩</button>
+                            <button type="button" class="option-btn type-training selected" data-type="training">🏊 训练</button>
+                            <button type="button" class="option-btn type-competition" data-type="competition">🏆 比赛</button>
                         </div>
                     </div>
 
@@ -220,7 +230,9 @@
                         <input type="text" id="event-name" class="modal-input" placeholder="如：市青少年游泳锦标赛 50米自由泳" maxlength="40">
                     </div>
 
-                    <!-- 泳姿选择 -->
+                    <!-- 游泳专属：泳姿 + 距离 -->
+                    <div id="swim-fields">
+                        <!-- 泳姿选择 -->
                         <div class="form-section">
                             <label class="form-section-label">泳姿</label>
                             <div class="stroke-options" id="stroke-options">
@@ -247,6 +259,27 @@
                                 <input type="number" id="custom-distance" placeholder="自定义距离（米）" min="1">
                             </div>
                         </div>
+                    </div>
+
+                    <!-- 跑步专属：距离 -->
+                    <div id="run-fields" style="display:none;">
+                        <div class="form-section">
+                            <label class="form-section-label">跑步距离</label>
+                            <div class="custom-distance-row">
+                                <input type="number" id="run-distance" placeholder="米，如 3000（即 3 公里）" min="1">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 跳绳专属：次数 -->
+                    <div id="rope-fields" style="display:none;">
+                        <div class="form-section">
+                            <label class="form-section-label">跳绳次数</label>
+                            <div class="custom-distance-row">
+                                <input type="number" id="rope-count" placeholder="次，如 500" min="1">
+                            </div>
+                        </div>
+                    </div>
 
                         <!-- 用时输入 -->
                         <div class="form-section">
@@ -306,11 +339,14 @@
                     <!-- 筛选栏 -->
                     <div class="filter-bar">
                         <select id="filter-stroke" class="filter-select">
-                            <option value="">全部泳姿</option>
+                            <option value="">全部项目</option>
                         <option value="自由泳">🐬 自由泳</option>
                         <option value="蛙泳">🐸 蛙泳</option>
                         <option value="仰泳">🦦 仰泳</option>
                         <option value="蝶泳">🦋 蝶泳</option>
+                        <option value="混合泳">🌈 混合泳</option>
+                        <option value="跑步">🏃 跑步</option>
+                        <option value="跳绳">🤾 跳绳</option>
                         </select>
                         <select id="filter-distance" class="filter-select">
                             <option value="">全部距离</option>
@@ -380,6 +416,9 @@
                         <option value="蛙泳">🐸 蛙泳</option>
                         <option value="仰泳">🦦 仰泳</option>
                         <option value="蝶泳">🦋 蝶泳</option>
+                        <option value="混合泳">🌈 混合泳</option>
+                        <option value="跑步">🏃 跑步</option>
+                        <option value="跳绳">🤾 跳绳</option>
                         </select>
                         <select id="analysis-distance" class="filter-select">
                             <option value="50">50米</option>
@@ -772,6 +811,6 @@
         </div>
 
     </div><!-- /app -->
-    <script src="app.js?v=9"></script>
+    <script src="app.js?v=10"></script>
 </body>
 </html>

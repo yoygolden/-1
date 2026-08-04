@@ -57,6 +57,15 @@ function hashPassword(password, salt) {
 function newToken() {
     return crypto.randomBytes(24).toString('hex');
 }
+const BLINDBOX_COST = 10; // 抽一次盲盒消耗的积分（需与前端一致）
+// 积分始终由「打卡+记录」派生，盲盒消耗，保证多端一致：
+// 积分 = Σ打卡积分 + Σ记录积分 − 盲盒数×成本
+function computePoints(u) {
+    const earned = (u.checkins || []).reduce((s, c) => s + (c.points || 0), 0)
+                + (u.records || []).reduce((s, r) => s + (r.earnedPoints || 0), 0);
+    const spent = (u.blindBoxes || []).length * BLINDBOX_COST;
+    return Math.max(0, earned - spent);
+}
 function send(res, status, obj) {
     res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify(obj));
@@ -135,7 +144,9 @@ async function handleApi(req, res, url) {
             salt, hash,
             tokens: [token],
             nickname: b.nickname || b.account,
-            records: []
+            records: [],
+            checkins: [],
+            blindBoxes: []
         };
         saveStore();
         return send(res, 200, { token, nickname: store.users[b.account].nickname, account: b.account });
@@ -181,7 +192,7 @@ async function handleApi(req, res, url) {
     if (p === '/api/records' && method === 'POST') {
         const b = await readBody(req);
         const rec = b.record || b;
-        if (!rec.stroke || !rec.distance || rec.timeMs == null) {
+        if (!rec.id || !rec.stroke) {
             return send(res, 400, { error: '记录不完整' });
         }
         const now = Date.now();
@@ -221,18 +232,47 @@ async function handleApi(req, res, url) {
         }
     }
 
-    // 同步（用本地记录覆盖云端，按 id 合并）
+    // 同步全量资料（记录+打卡+盲盒），按各自主键合并，返回最新全量（多端一致）
     if (p === '/api/sync' && method === 'POST') {
         const b = await readBody(req);
-        const incoming = Array.isArray(b.records) ? b.records : [];
-        const map = {};
-        user.records.forEach((r) => (map[r.id] = r));
-        incoming.forEach((r) => {
-            if (r && r.id) map[r.id] = { ...r };
+        // 记录：按 id 合并
+        const recMap = {};
+        user.records.forEach((r) => (recMap[r.id] = r));
+        (Array.isArray(b.records) ? b.records : []).forEach((r) => {
+            if (r && r.id) recMap[r.id] = { ...r };
         });
-        user.records = Object.values(map);
+        user.records = Object.values(recMap);
+        // 打卡：按 date 合并（每日一条）
+        const ckMap = {};
+        user.checkins.forEach((c) => (ckMap[c.date] = c));
+        (Array.isArray(b.checkins) ? b.checkins : []).forEach((c) => {
+            if (c && c.date) ckMap[c.date] = { ...c };
+        });
+        user.checkins = Object.values(ckMap);
+        // 盲盒：按 id 合并
+        const bbMap = {};
+        user.blindBoxes.forEach((x) => (bbMap[x.id] = x));
+        (Array.isArray(b.blindBoxes) ? b.blindBoxes : []).forEach((x) => {
+            if (x && x.id) bbMap[x.id] = { ...x };
+        });
+        user.blindBoxes = Object.values(bbMap);
         saveStore();
-        return send(res, 200, { records: user.records, count: user.records.length });
+        return send(res, 200, {
+            records: user.records,
+            checkins: user.checkins,
+            blindBoxes: user.blindBoxes,
+            points: computePoints(user)
+        });
+    }
+
+    // 拉取全量资料（记录+打卡+盲盒+积分），用于多端同步
+    if (p === '/api/profile' && method === 'GET') {
+        return send(res, 200, {
+            records: user.records,
+            checkins: user.checkins,
+            blindBoxes: user.blindBoxes,
+            points: computePoints(user)
+        });
     }
 
     // 导出（完整备份）

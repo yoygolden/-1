@@ -146,6 +146,34 @@ const Store = {
         });
     },
 
+    // 合并云端全量资料（记录+打卡+盲盒），按各自主键合并
+    mergeProfile(p) {
+        if (!p) return;
+        this.updateUser(user => {
+            // 记录：按 id
+            const recMap = {};
+            user.records.forEach(r => (recMap[r.id] = r));
+            (Array.isArray(p.records) ? p.records : []).forEach(r => {
+                if (r && r.id) recMap[r.id] = { ...r };
+            });
+            user.records = Object.values(recMap);
+            // 打卡：按 date
+            const ckMap = {};
+            user.checkins.forEach(c => (ckMap[c.date] = c));
+            (Array.isArray(p.checkins) ? p.checkins : []).forEach(c => {
+                if (c && c.date) ckMap[c.date] = { ...c };
+            });
+            user.checkins = Object.values(ckMap);
+            // 盲盒：按 id
+            const bbMap = {};
+            (user.blindBoxes || []).forEach(x => (bbMap[x.id] = x));
+            (Array.isArray(p.blindBoxes) ? p.blindBoxes : []).forEach(x => {
+                if (x && x.id) bbMap[x.id] = { ...x };
+            });
+            user.blindBoxes = Object.values(bbMap);
+        });
+    },
+
     /* ---------- 打卡 / 积分 / 盲盒 ---------- */
     getCheckins() {
         const u = this.getCurrentUser();
@@ -157,11 +185,18 @@ const Store = {
             u.checkins.push(entry);
         });
     },
+    // 积分始终由「打卡 + 记录」派生、盲盒消耗，保证多端一致：
+    // 积分 = Σ打卡积分 + Σ记录积分(earnedPoints) − 盲盒数 × 成本
     getPoints() {
         const u = this.getCurrentUser();
-        return u ? (u.points || 0) : 0;
+        if (!u) return 0;
+        const earned = (u.checkins || []).reduce((s, c) => s + (c.points || 0), 0)
+                    + (u.records || []).reduce((s, r) => s + (r.earnedPoints || 0), 0);
+        const spent = (u.blindBoxes || []).length * BLINDBOX_COST;
+        return Math.max(0, earned - spent);
     },
     addPoints(n) {
+        // 保留方法以便兼容，实际积分改为派生（见 getPoints）
         this.updateUser(u => { u.points = (u.points || 0) + n; });
     },
     spendPoints(n) {
@@ -221,22 +256,33 @@ const CloudAPI = {
     login(account, password) {
         return this.request('/api/login', { method: 'POST', body: { account, password } });
     },
-    getRecords() { return this.request('/api/records'); },
-    sync(records) { return this.request('/api/sync', { method: 'POST', body: { records } }); },
+    // 全量资料：记录 + 打卡 + 盲盒（多端一致）
+    getProfile() { return this.request('/api/profile'); },
+    syncProfile(profile) { return this.request('/api/sync', { method: 'POST', body: profile }); },
     exportData() { return this.request('/api/export'); },
     importData(records) { return this.request('/api/import', { method: 'POST', body: { records } }); },
     updateNickname(nickname) { return this.request('/api/me', { method: 'PUT', body: { nickname } }); }
 };
 
 /* ==================== 统一登录（云端优先 + 本地兜底 + 自动迁移） ==================== */
-// 记录变更后，若已登录云端，防抖把本地记录同步到后端（失败静默）
+// 记录变更后，若已登录云端，防抖把本地全量资料（记录+打卡+盲盒）同步到后端（失败静默）
 let _syncTimer = null;
-let _lastSyncCount = -1; // 记录最近一次同步后的本地记录数，用于判断是否需要刷新页面
+let _lastSyncSig = ''; // 最近一次同步后的资料签名（记录+打卡+盲盒数量），用于判断是否需要刷新页面
+function syncSignature() {
+    return Store.getRecords().length + '|' + Store.getCheckins().length + '|' + Store.getBlindBoxes().length;
+}
+function buildProfile() {
+    return {
+        records: Store.getRecords(),
+        checkins: Store.getCheckins(),
+        blindBoxes: Store.getBlindBoxes()
+    };
+}
 function scheduleCloudSync() {
     if (!CloudAPI.connected) return;
     if (_syncTimer) clearTimeout(_syncTimer);
     _syncTimer = setTimeout(() => {
-        CloudAPI.sync(Store.getRecords()).catch(() => {});
+        CloudAPI.syncProfile(buildProfile()).catch(() => {});
     }, 600);
 }
 
@@ -257,9 +303,9 @@ async function bindCloudSession(res, account, fallbackNickname, password) {
     }
     Store.setSession(account);
 
-    // 登录后双向同步：先拉云端、再推本地，保证多设备数据一致
+    // 登录后双向同步：先拉云端、再推本地，保证多设备资料一致（含打卡/盲盒/积分）
     await syncNow();
-    _lastSyncCount = Store.getRecords().length;
+    _lastSyncSig = syncSignature();
 }
 
 // 统一登录/注册：优先云端（多设备同步），后端不可用时退回本地
@@ -319,11 +365,11 @@ async function autoCloudMigrate() {
         CloudAPI.account = res.account;
         CloudAPI.nickname = res.nickname || user.nickname || account;
         if (Array.isArray(user.records) && user.records.length) {
-            await CloudAPI.sync(user.records);
+            await CloudAPI.syncProfile(buildProfile());
         }
         try {
-            const data = await CloudAPI.getRecords();
-            if (data && Array.isArray(data.records)) Store.mergeCloud(data.records);
+            const data = await CloudAPI.getProfile();
+            if (data) Store.mergeProfile(data);
         } catch (e) {}
         // 迁移成功后刷新当前页面视图
         const cur = document.querySelector('.page.active');
@@ -348,23 +394,23 @@ async function reauthCloud() {
     } catch (e) { return false; }
 }
 
-// 双向同步：先拉取云端记录合并到本地，再把本地独有记录推送到云端（按 id 合并，不丢数据）
+// 双向同步：先拉取云端全量资料合并到本地，再把本地独有资料推送到云端（按主键合并，不丢数据）
 // 返回同步后的本地记录数；失败（含重连失败）返回 -1
 async function syncNow() {
     if (!CloudAPI.connected) return -1;
     try {
-        const data = await CloudAPI.getRecords();
-        if (data && Array.isArray(data.records)) Store.mergeCloud(data.records);
-        await CloudAPI.sync(Store.getRecords());
+        const data = await CloudAPI.getProfile();
+        if (data) Store.mergeProfile(data);
+        await CloudAPI.syncProfile(buildProfile());
         return Store.getRecords().length;
     } catch (e) {
         if (e && e.status === 401) {
             const ok = await reauthCloud();
             if (ok) {
                 try {
-                    const data = await CloudAPI.getRecords();
-                    if (data && Array.isArray(data.records)) Store.mergeCloud(data.records);
-                    await CloudAPI.sync(Store.getRecords());
+                    const data = await CloudAPI.getProfile();
+                    if (data) Store.mergeProfile(data);
+                    await CloudAPI.syncProfile(buildProfile());
                     return Store.getRecords().length;
                 } catch (_) {}
             }
@@ -373,15 +419,16 @@ async function syncNow() {
     }
 }
 
-// 回到前台 / 定时：主动从云端拉取最新记录并刷新当前数据页（多设备实时可见）
+// 回到前台 / 定时：主动从云端拉取最新资料并刷新当前数据页（多设备实时可见）
 function onCloudRefresh() {
     if (!CloudAPI.connected) return;
     const authView = document.getElementById('auth-view');
     if (authView && authView.classList.contains('active')) return;
     syncNow().then((n) => {
         if (n < 0) return;
-        if (n !== _lastSyncCount) {
-            _lastSyncCount = n;
+        const sig = syncSignature();
+        if (sig !== _lastSyncSig) {
+            _lastSyncSig = sig;
             const refreshers = {
                 home: () => PageHome.render(),
                 history: () => PageHistory.render(),
@@ -389,7 +436,7 @@ function onCloudRefresh() {
             };
             if (refreshers[Router.current]) refreshers[Router.current]();
         } else {
-            _lastSyncCount = n;
+            _lastSyncSig = sig;
         }
     });
 }
@@ -479,7 +526,9 @@ const Utils = {
             '蛙泳': { bg: 'var(--mint-bg)', color: '#059669', class: 'breaststroke', emoji: '🐸', animal: '青蛙' },
             '仰泳': { bg: 'var(--coral-bg)', color: '#EA580C', class: 'backstroke', emoji: '🦦', animal: '水獭' },
             '蝶泳': { bg: 'var(--grape-bg)', color: '#7C3AED', class: 'butterfly', emoji: '🦋', animal: '蝴蝶' },
-            '混合泳': { bg: 'var(--rose-bg)', color: '#DB2777', class: 'medley', emoji: '🌈', animal: '全能' }
+            '混合泳': { bg: 'var(--rose-bg)', color: '#DB2777', class: 'medley', emoji: '🌈', animal: '全能' },
+            '跑步': { bg: 'var(--mint-bg)', color: '#0E7490', class: 'run', emoji: '🏃', animal: '猎豹' },
+            '跳绳': { bg: 'var(--grape-bg)', color: '#7C3AED', class: 'rope', emoji: '🤾', animal: '袋鼠' }
         };
         return map[stroke] || map['自由泳'];
     },
@@ -642,6 +691,14 @@ function rollBlindBox() {
     return { rarity: chosen.key, label: chosen.label, color: chosen.color, icon: chosen.icon, name };
 }
 
+// 记录兑换积分：游泳每 250 米约 1 分、跑步每公里 1 分、跳绳每 200 次 1 分，保底 1 分
+function pointsForRecord(r) {
+    if (r.category === 'rope') return 1 + Math.floor((r.count || 0) / 200);
+    const dist = r.distance || 0;
+    if (r.category === 'run') return Math.max(1, Math.round(dist / 1000));
+    return Math.max(1, Math.round(dist / 250));
+}
+
 /* ==================== 页面：首页 ==================== */
 const PageHome = {
     render() {
@@ -753,7 +810,6 @@ const PageHome = {
         while (set.has(this._dateStr(d))) { streak++; d.setDate(d.getDate() - 1); }
         // 累计越多、连续越长，本次积分越多
         const points = 5 + Math.floor(checkins.length / 5) + Math.min(streak - 1, 5);
-        Store.addPoints(points);
         Store.addCheckin({ date: today, points, streak });
         Toast.show('打卡成功 +' + points + ' 积分', { type: 'success', sub: '连续打卡 ' + streak + ' 天' });
         this.renderCheckin();
@@ -767,7 +823,6 @@ const PageHome = {
             Toast.show('积分不足，先去打卡攒积分吧～');
             return;
         }
-        Store.spendPoints(BLINDBOX_COST);
         const rb = rollBlindBox();
         const item = {
             id: Utils.uid(),
@@ -804,13 +859,17 @@ const PageHome = {
         modal.classList.add('active');
     },
 
+    // 通用进步度量：游泳/跑步用时越少越好；跳绳次数越多越好（取负便于统一比较）
+    _metricOf(r) {
+        return (r.category === 'rope') ? -(r.count || 0) : (r.timeMs || 0);
+    },
+
     computeProgressOverview(records) {
         const groups = {};
         records.forEach(r => {
             const key = r.stroke + '|' + r.distance;
             (groups[key] = groups[key] || []).push(r);
         });
-        // 按 日期+创建顺序 升序排序的辅助
         const sortByDate = arr => arr.slice().sort((a, b) =>
             a.date === b.date ? (a.createdAt || 0) - (b.createdAt || 0) : a.date.localeCompare(b.date));
 
@@ -820,10 +879,11 @@ const PageHome = {
             const s = sortByDate(g);
             if (s.length < 2) return;
             const prev = s[s.length - 2], latest = s[s.length - 1];
-            const diff = latest.timeMs - prev.timeMs; // 用时减少 = 进步
+            const diff = this._metricOf(latest) - this._metricOf(prev); // 度量变小 = 进步
             if (diff < 0) {
                 improve++;
-                if (prev.timeMs > 0) { rateSum += Math.abs(diff) / prev.timeMs * 100; rateCount++; }
+                const base = Math.abs(this._metricOf(prev)) || 1;
+                rateSum += Math.abs(diff) / base * 100; rateCount++;
             } else if (diff > 0) {
                 regress++;
             } else {
@@ -841,12 +901,18 @@ const PageHome = {
             const g = sortByDate(groups[latest.stroke + '|' + latest.distance] || []);
             if (g.length >= 2) {
                 const prev = g[g.length - 2];
-                const diff = latest.timeMs - prev.timeMs;
-                const rate = prev.timeMs > 0 ? Math.abs(diff) / prev.timeMs * 100 : 0;
-                const t = Utils.msToTime(Math.abs(diff));
-                if (diff < 0) lastTrend = { type: 'improve', rate, stroke: latest.stroke, distance: latest.distance, t };
-                else if (diff > 0) lastTrend = { type: 'regress', rate, stroke: latest.stroke, distance: latest.distance, t };
-                else lastTrend = { type: 'same', stroke: latest.stroke, distance: latest.distance };
+                const diff = this._metricOf(latest) - this._metricOf(prev);
+                const isRope = latest.category === 'rope';
+                let desc;
+                if (isRope) {
+                    const d = Math.abs((latest.count || 0) - (prev.count || 0));
+                    desc = `${latest.stroke} 次数${diff < 0 ? '增加' : '减少'} ${d} 次`;
+                } else {
+                    const dT = Utils.msToTime(Math.abs(this._metricOf(latest) - this._metricOf(prev)));
+                    const dist = latest.distance >= 1000 ? (latest.distance / 1000).toFixed(1) + 'km' : latest.distance + '米';
+                    desc = `${latest.stroke} ${dist} ${diff < 0 ? '快了' : '慢了'} ${dT.main}.${dT.ms}`;
+                }
+                lastTrend = { type: diff < 0 ? 'improve' : (diff > 0 ? 'regress' : 'same'), desc };
             }
         }
         return { improve, regress, same, avgRate, lastTrend, series: improve + regress + same };
@@ -871,17 +937,17 @@ const PageHome = {
             if (t.type === 'improve') {
                 summary = `<div class="progress-ov-summary">
                     <span class="progress-arrow improve"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 19V5M5 12l7-7 7 7"/></svg></span>
-                    <span>最近一次 <b>${t.stroke} ${t.distance}m</b> 进步 ${t.rate.toFixed(1)}% ↑（快了 ${t.t.main}.${t.t.ms}）</span>
+                    <span>最近一次 <b>${t.desc}</b> 进步 ↑</span>
                 </div>`;
             } else if (t.type === 'regress') {
                 summary = `<div class="progress-ov-summary">
                     <span class="progress-arrow regress"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12l7 7 7-7"/></svg></span>
-                    <span>最近一次 <b>${t.stroke} ${t.distance}m</b> 退步 ${t.rate.toFixed(1)}% ↓（慢了 ${t.t.main}.${t.t.ms}）</span>
+                    <span>最近一次 <b>${t.desc}</b> 退步 ↓</span>
                 </div>`;
             } else {
                 summary = `<div class="progress-ov-summary">
                     <span class="progress-arrow same"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14"/></svg></span>
-                    <span>最近一次 <b>${t.stroke} ${t.distance}m</b> 成绩持平</span>
+                    <span>最近一次 <b>${t.desc}</b> 成绩持平</span>
                 </div>`;
             }
         }
@@ -907,10 +973,9 @@ const PageHome = {
 
     renderBestCards(records) {
         const container = document.getElementById('home-best-cards');
-        const strokes = ['自由泳', '蛙泳', '仰泳', '蝶泳', '混合泳'];
-        const distances = [50, 100, 200, 400, 800, 1500];
+        const strokes = ['自由泳', '蛙泳', '仰泳', '蝶泳', '混合泳', '跑步', '跳绳'];
 
-        // 对每个泳姿找最佳成绩
+        // 对每个项目找最佳：游泳/跑步按用时最短；跳绳按次数最多
         const bests = {};
         strokes.forEach(stroke => {
             const strokeRecords = records.filter(r => r.stroke === stroke);
@@ -918,12 +983,15 @@ const PageHome = {
                 bests[stroke] = null;
                 return;
             }
-            // 找用时最短的
-            let best = strokeRecords[0];
-            strokeRecords.forEach(r => {
-                if (r.timeMs < best.timeMs) best = r;
-            });
-            bests[stroke] = best;
+            if (stroke === '跳绳') {
+                let best = strokeRecords[0];
+                strokeRecords.forEach(r => { if ((r.count || 0) > (best.count || 0)) best = r; });
+                bests[stroke] = best;
+            } else {
+                let best = strokeRecords[0];
+                strokeRecords.forEach(r => { if (r.timeMs < best.timeMs) best = r; });
+                bests[stroke] = best;
+            }
         });
 
         container.innerHTML = strokes.map(stroke => {
@@ -941,14 +1009,28 @@ const PageHome = {
                     </div>
                 `;
             }
+            if (stroke === '跳绳') {
+                return `
+                    <div class="best-card has-record" data-stroke="${stroke}" data-distance="0">
+                        <div class="best-card-header">
+                            <span class="stroke-tag ${sc.class}-bg">${sc.emoji}${stroke}</span>
+                            <svg class="trophy-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M19 5h-2V3H7v2H5a2 2 0 00-2 2v3a4 4 0 003.5 3.97V18a2 2 0 002 2h2v1h4v-1h2a2 2 0 002-2v-4.03A4 4 0 0021 10V7a2 2 0 00-2-2zM5 10V7h2v5.83A2 2 0 015 10zm14 0a2 2 0 01-2 2.83V7h2v3z"/></svg>
+                        </div>
+                        <div class="best-card-distance">${best.count} 次</div>
+                        <div class="best-card-time">最佳次数</div>
+                        <div class="best-card-date">${Utils.formatDate(best.date)}</div>
+                    </div>
+                `;
+            }
             const t = Utils.msToTime(best.timeMs);
+            const distText = best.distance >= 1000 ? (best.distance / 1000).toFixed(1) + 'km' : best.distance + '米';
             return `
                 <div class="best-card has-record" data-stroke="${stroke}" data-distance="${best.distance}">
                     <div class="best-card-header">
                         <span class="stroke-tag ${sc.class}-bg">${sc.emoji}${stroke}</span>
                         <svg class="trophy-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M19 5h-2V3H7v2H5a2 2 0 00-2 2v3a4 4 0 003.5 3.97V18a2 2 0 002 2h2v1h4v-1h2a2 2 0 002-2v-4.03A4 4 0 0021 10V7a2 2 0 00-2-2zM5 10V7h2v5.83A2 2 0 015 10zm14 0a2 2 0 01-2 2.83V7h2v3z"/></svg>
                     </div>
-                    <div class="best-card-distance">${best.distance}米</div>
+                    <div class="best-card-distance">${distText}</div>
                     <div class="best-card-time">${t.main}.<span class="ms-part">${t.ms}</span></div>
                     <div class="best-card-date">${Utils.formatDate(best.date)}</div>
                 </div>
@@ -973,7 +1055,9 @@ const PageHome = {
             { name: '蛙泳', class: 'breaststroke' },
             { name: '仰泳', class: 'backstroke' },
             { name: '蝶泳', class: 'butterfly' },
-            { name: '混合泳', class: 'medley' }
+            { name: '混合泳', class: 'medley' },
+            { name: '跑步', class: 'run' },
+            { name: '跳绳', class: 'rope' }
         ];
         const counts = {};
         strokes.forEach(s => counts[s.name] = 0);
@@ -1031,18 +1115,22 @@ const PageHome = {
 
         container.innerHTML = recent.map(r => {
             const sc = Utils.strokeColor(r.stroke);
-            const t = Utils.msToTime(r.timeMs);
             const isPB = bestMap[`${r.stroke}-${r.distance}-${r.type || 'training'}`]?.id === r.id;
             const ti = Utils.typeInfo(r.type);
+            let detail;
+            if (r.category === 'rope') detail = `${sc.emoji}${r.stroke}<span>·</span>${r.count} 次`;
+            else detail = `${sc.emoji}${r.stroke}<span>·</span>${r.distance >= 1000 ? (r.distance / 1000).toFixed(1) + 'km' : r.distance + '米'}`;
+            let timeText = '';
+            if (r.timeMs > 0) { const t = Utils.msToTime(r.timeMs); timeText = `${t.main}<span class="ms-part">.${t.ms}</span>`; }
             return `
                 <div class="recent-item ${isPB ? 'recent-item-pb' : ''}" data-id="${r.id}">
                     <div class="recent-stroke" style="background:${sc.bg};color:${sc.color}">${sc.emoji}</div>
                     <div class="recent-info">
                         <div class="recent-date">${Utils.formatDate(r.date)}</div>
-                        <div class="recent-detail">${sc.emoji}${r.stroke}<span>·</span>${r.distance}米</div>
+                        <div class="recent-detail">${detail}</div>
                         <div class="recent-tags"><span class="record-type-badge type-${r.type || 'training'}">${ti.emoji}${ti.short}</span></div>
                     </div>
-                    <div class="recent-time">${t.main}<span class="ms-part">.${t.ms}</span></div>
+                    <div class="recent-time">${timeText}</div>
                 </div>
             `;
         }).join('');
@@ -1057,6 +1145,7 @@ const PageHome = {
 
 /* ==================== 页面：记录成绩 ==================== */
 const PageRecord = {
+    selectedCategory: 'swim',
     selectedStroke: null,
     selectedDistance: null,
     selectedType: 'training',
@@ -1070,6 +1159,7 @@ const PageRecord = {
             const records = Store.getRecords();
             const record = records.find(r => r.id === editingId);
             if (record) {
+                this.selectedCategory = record.category || 'swim';
                 this.selectedStroke = record.stroke;
                 this.selectedDistance = record.distance;
                 this.selectedType = record.type || 'training';
@@ -1081,8 +1171,11 @@ const PageRecord = {
                 document.getElementById('record-note').value = record.note || '';
                 document.getElementById('event-name').value = record.eventName || '';
                 document.getElementById('custom-distance').value = '';
+                document.getElementById('run-distance').value = this.selectedCategory === 'run' ? record.distance : '';
+                document.getElementById('rope-count').value = this.selectedCategory === 'rope' ? (record.count || '') : '';
             }
         } else {
+            this.selectedCategory = 'swim';
             this.selectedStroke = null;
             this.selectedDistance = null;
             this.selectedType = 'training';
@@ -1093,11 +1186,31 @@ const PageRecord = {
             document.getElementById('record-note').value = '';
             document.getElementById('event-name').value = '';
             document.getElementById('custom-distance').value = '';
+            document.getElementById('run-distance').value = '';
+            document.getElementById('rope-count').value = '';
         }
 
+        // 更新运动项目按钮高亮
+        document.querySelectorAll('#category-options .option-btn').forEach(btn => {
+            btn.classList.toggle('selected', btn.dataset.category === this.selectedCategory);
+        });
+        this.updateCategoryUI();
         this.updateStrokeUI();
         this.updateDistanceUI();
         this.updateTypeUI();
+    },
+
+    // 根据运动项目切换可见字段
+    updateCategoryUI() {
+        const isSwim = this.selectedCategory === 'swim';
+        const isRun = this.selectedCategory === 'run';
+        const isRope = this.selectedCategory === 'rope';
+        document.getElementById('swim-fields').style.display = isSwim ? 'block' : 'none';
+        document.getElementById('run-fields').style.display = isRun ? 'block' : 'none';
+        document.getElementById('rope-fields').style.display = isRope ? 'block' : 'none';
+        // 成绩类型仅游泳/跑步可选；跳绳统一为训练
+        document.getElementById('type-section').style.display = isRope ? 'none' : 'block';
+        if (isRope) this.selectedType = 'training';
     },
 
     updateStrokeUI() {
@@ -1117,105 +1230,116 @@ const PageRecord = {
             btn.classList.toggle('selected', btn.dataset.type === this.selectedType);
         });
         const evSection = document.getElementById('event-name-section');
-        evSection.style.display = this.selectedType === 'competition' ? 'block' : 'none';
+        evSection.style.display = (this.selectedCategory === 'swim' && this.selectedType === 'competition') ? 'block' : 'none';
+    },
+
+    // 读取当前表单构建一条记录（含 category / 展示标签 / 积分）
+    buildRecordBase() {
+        const date = document.getElementById('record-date').value;
+        const note = document.getElementById('record-note').value.trim();
+        const type = this.selectedType;
+        const eventName = (this.selectedCategory === 'swim' && type === 'competition')
+            ? document.getElementById('event-name').value.trim() : '';
+
+        const base = {
+            date, note, type, eventName,
+            category: this.selectedCategory,
+            stroke: '',
+            distance: 0,
+            count: 0,
+            timeMs: 0,
+            createdAt: Date.now()
+        };
+
+        if (this.selectedCategory === 'swim') {
+            base.stroke = this.selectedStroke;
+            let distance = this.selectedDistance;
+            const customDist = document.getElementById('custom-distance').value.trim();
+            if (customDist) distance = parseInt(customDist);
+            base.distance = distance;
+            const min = document.getElementById('time-min').value.trim();
+            const sec = document.getElementById('time-sec').value.trim();
+            const ms = document.getElementById('time-ms').value.trim();
+            base.timeMs = Utils.inputsToMs(min, sec, ms);
+        } else if (this.selectedCategory === 'run') {
+            base.stroke = '跑步';
+            base.distance = parseInt(document.getElementById('run-distance').value.trim()) || 0;
+            const min = document.getElementById('time-min').value.trim();
+            const sec = document.getElementById('time-sec').value.trim();
+            const ms = document.getElementById('time-ms').value.trim();
+            base.timeMs = Utils.inputsToMs(min, sec, ms);
+        } else if (this.selectedCategory === 'rope') {
+            base.stroke = '跳绳';
+            base.count = parseInt(document.getElementById('rope-count').value.trim()) || 0;
+            const min = document.getElementById('time-min').value.trim();
+            const sec = document.getElementById('time-sec').value.trim();
+            const ms = document.getElementById('time-ms').value.trim();
+            base.timeMs = Utils.inputsToMs(min, sec, ms); // 可选，不填则为 0
+        }
+        base.earnedPoints = pointsForRecord(base);
+        return base;
     },
 
     save() {
         // 验证
-        if (!this.selectedStroke) {
-            Toast.show('请选择泳姿');
-            return;
-        }
-
-        // 距离：优先选择按钮，其次自定义输入
-        let distance = this.selectedDistance;
-        const customDist = document.getElementById('custom-distance').value.trim();
-        if (customDist) {
-            distance = parseInt(customDist);
-        }
-        if (!distance || distance <= 0) {
-            Toast.show('请选择或输入距离');
-            return;
-        }
-
-        const min = document.getElementById('time-min').value.trim();
-        const sec = document.getElementById('time-sec').value.trim();
-        const ms = document.getElementById('time-ms').value.trim();
-        const timeMs = Utils.inputsToMs(min, sec, ms);
-
-        if (timeMs <= 0) {
-            Toast.show('请输入有效的用时');
-            return;
+        if (this.selectedCategory === 'swim') {
+            if (!this.selectedStroke) { Toast.show('请选择泳姿'); return; }
+            let distance = this.selectedDistance;
+            const customDist = document.getElementById('custom-distance').value.trim();
+            if (customDist) distance = parseInt(customDist);
+            if (!distance || distance <= 0) { Toast.show('请选择或输入距离'); return; }
+            const t = Utils.inputsToMs(
+                document.getElementById('time-min').value.trim(),
+                document.getElementById('time-sec').value.trim(),
+                document.getElementById('time-ms').value.trim()
+            );
+            if (t <= 0) { Toast.show('请输入有效的用时'); return; }
+        } else if (this.selectedCategory === 'run') {
+            const d = parseInt(document.getElementById('run-distance').value.trim());
+            if (!d || d <= 0) { Toast.show('请输入跑步距离'); return; }
+            const t = Utils.inputsToMs(
+                document.getElementById('time-min').value.trim(),
+                document.getElementById('time-sec').value.trim(),
+                document.getElementById('time-ms').value.trim()
+            );
+            if (t <= 0) { Toast.show('请输入跑步用时'); return; }
+        } else if (this.selectedCategory === 'rope') {
+            const c = parseInt(document.getElementById('rope-count').value.trim());
+            if (!c || c <= 0) { Toast.show('请输入跳绳次数'); return; }
         }
 
         const date = document.getElementById('record-date').value;
-        if (!date) {
-            Toast.show('请选择日期');
-            return;
-        }
+        if (!date) { Toast.show('请选择日期'); return; }
 
-        const note = document.getElementById('record-note').value.trim();
-        const type = this.selectedType;
-        const eventName = type === 'competition' ? document.getElementById('event-name').value.trim() : '';
+        const base = this.buildRecordBase();
 
         if (this.editingId) {
-            // 编辑模式
-            Store.updateRecord(this.editingId, {
-                stroke: this.selectedStroke,
-                distance,
-                timeMs,
-                date,
-                note,
-                type,
-                eventName
-            });
+            Store.updateRecord(this.editingId, base);
             scheduleCloudSync();
             Toast.show('成绩已更新', { type: 'success' });
             setTimeout(() => Router.navigate('history'), 800);
         } else {
-            // 新增模式
-            const newRecord = {
-                id: Utils.uid(),
-                stroke: this.selectedStroke,
-                distance,
-                timeMs,
-                date,
-                note,
-                type,
-                eventName,
-                createdAt: Date.now()
-            };
+            const newRecord = { id: Utils.uid(), ...base };
             Store.addRecord(newRecord);
             scheduleCloudSync();
 
-            // 检查是否破最佳（按 泳姿+距离+类型 判定）
-            const allRecords = Store.getRecords();
-            const sameProject = allRecords.filter(r =>
-                r.stroke === this.selectedStroke && r.distance === distance &&
-                (r.type || 'training') === type && r.id !== newRecord.id
-            );
-            const prevBest = sameProject.length > 0 ? Math.min(...sameProject.map(r => r.timeMs)) : null;
-
-            if (prevBest !== null && timeMs < prevBest) {
-                const diff = prevBest - timeMs;
-                const diffT = Utils.msToTime(diff);
-                Toast.show('成绩已记录！', {
-                    type: 'success',
-                    sub: `比最佳成绩快了 ${diffT.main}.${diffT.ms}`
-                });
-            } else if (prevBest !== null && timeMs > prevBest) {
-                const diff = timeMs - prevBest;
-                const diffT = Utils.msToTime(diff);
-                Toast.show('成绩已记录！', {
-                    type: 'success',
-                    sub: `距最佳成绩差 ${diffT.main}.${diffT.ms}`
-                });
-            } else {
-                Toast.show('成绩已记录！', { type: 'success' });
+            // 破最佳提示（仅游泳/跑步按用时判定）
+            let sub = `获得 ${newRecord.earnedPoints} 积分`;
+            if (this.selectedCategory !== 'rope') {
+                const all = Store.getRecords();
+                const same = all.filter(r =>
+                    r.category === this.selectedCategory && r.stroke === newRecord.stroke &&
+                    r.distance === newRecord.distance && (r.type || 'training') === newRecord.type &&
+                    r.id !== newRecord.id);
+                const prevBest = same.length ? Math.min(...same.map(r => r.timeMs)) : null;
+                if (prevBest !== null && newRecord.timeMs < prevBest) {
+                    const diffT = Utils.msToTime(prevBest - newRecord.timeMs);
+                    sub = `比最佳快了 ${diffT.main}.${diffT.ms}，并获 ${newRecord.earnedPoints} 积分`;
+                }
             }
+            Toast.show('成绩已记录！', { type: 'success', sub });
 
-            // 新增成功后停留在记录页，方便连续录入：
-            // 保留泳姿/距离/类型选择，仅清空本次输入的时间与备注
+            // 停留在记录页，方便连续录入：保留项目/类型，仅清空本次输入
             this.editingId = null;
             document.getElementById('record-page-title').textContent = '记录成绩';
             document.getElementById('time-min').value = '';
@@ -1223,6 +1347,11 @@ const PageRecord = {
             document.getElementById('time-ms').value = '';
             document.getElementById('record-note').value = '';
             document.getElementById('event-name').value = '';
+            document.getElementById('custom-distance').value = '';
+            document.getElementById('run-distance').value = '';
+            document.getElementById('rope-count').value = '';
+            this.selectedStroke = null;
+            this.selectedDistance = null;
             this.updateStrokeUI();
             this.updateDistanceUI();
             this.updateTypeUI();
@@ -1281,9 +1410,14 @@ const PageHistory = {
 
         container.innerHTML = filtered.map(r => {
             const sc = Utils.strokeColor(r.stroke);
-            const t = Utils.msToTime(r.timeMs);
             const isPB = bestMap[`${r.stroke}-${r.distance}-${r.type || 'training'}`]?.id === r.id;
             const ti = Utils.typeInfo(r.type);
+            // 展示文案：跳绳显示次数；跑步/游泳显示距离（≥1000米显示为 km）
+            let detailText;
+            if (r.category === 'rope') detailText = `<strong>${sc.emoji}${r.stroke}</strong> · ${r.count} 次`;
+            else detailText = `<strong>${sc.emoji}${r.stroke}</strong> · ${r.distance >= 1000 ? (r.distance / 1000).toFixed(1) + 'km' : r.distance + '米'}`;
+            let timeText = '';
+            if (r.timeMs > 0) { const t = Utils.msToTime(r.timeMs); timeText = `${t.main}<span class="ms-part">.${t.ms}</span>`; }
             return `
                 <div class="history-item ${isPB ? 'history-item-pb' : ''}" data-id="${r.id}">
                     ${isPB ? `
@@ -1294,13 +1428,13 @@ const PageHistory = {
                     <div class="history-stroke" style="background:${sc.bg};color:${sc.color}">${sc.emoji}</div>
                     <div class="history-info">
                         <div class="history-date">${Utils.formatDate(r.date)}</div>
-                        <div class="history-detail"><strong>${sc.emoji}${r.stroke}</strong> · ${r.distance}米</div>
+                        <div class="history-detail">${detailText}</div>
                         <div class="history-tags">
                             <span class="record-type-badge type-${r.type || 'training'}">${ti.emoji}${ti.short}</span>
                             ${(r.type === 'competition' && r.eventName) ? `<span class="history-event">${ModalDetail.escapeHtml(r.eventName)}</span>` : ''}
                         </div>
                     </div>
-                    <div class="history-time">${t.main}<span class="ms-part">.${t.ms}</span></div>
+                    <div class="history-time">${timeText}</div>
                     <svg class="history-arrow" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
                 </div>
             `;
@@ -1327,10 +1461,26 @@ const PageAnalysis = {
         this.currentDistance = parseInt(distance);
     },
 
+    // 跳绳按次数衡量（越多越好），其余按用时（越少越好）
+    _isCountProject() { return this.currentStroke === '跳绳'; },
+    _metricOf(r) { return this._isCountProject() ? (r.count || 0) : (r.timeMs || 0); },
+    _isBetter(a, b) {
+        if (this._isCountProject()) return (a.count || 0) > (b.count || 0);
+        return (a.timeMs || 0) < (b.timeMs || 0);
+    },
+    _bestOf(records) {
+        let best = records[0];
+        records.forEach(r => { if (this._isBetter(r, best)) best = r; });
+        return best;
+    },
+
     render() {
         // 同步选择器
         document.getElementById('analysis-stroke').value = this.currentStroke;
         document.getElementById('analysis-distance').value = this.currentDistance;
+        // 跑步/跳绳距离不固定，隐藏距离筛选
+        const distEl = document.getElementById('analysis-distance');
+        if (distEl) distEl.style.display = this._isCountProject() || this.currentStroke === '跑步' ? 'none' : 'block';
 
         // 时间范围
         document.querySelectorAll('.range-tab').forEach(tab => {
@@ -1347,9 +1497,11 @@ const PageAnalysis = {
 
     getFilteredRecords() {
         const records = Store.getRecords();
-        let filtered = records.filter(r =>
-            r.stroke === this.currentStroke && r.distance === this.currentDistance
-        );
+        const isCount = this._isCountProject();
+        const isRun = this.currentStroke === '跑步';
+        let filtered = records.filter(r => r.stroke === this.currentStroke);
+        // 跑步/跳绳距离不固定，不做距离筛选
+        if (!isCount && !isRun) filtered = filtered.filter(r => r.distance === this.currentDistance);
         if (this.currentType) filtered = filtered.filter(r => (r.type || 'training') === this.currentType);
 
         // 时间范围筛选
@@ -1385,15 +1537,13 @@ const PageAnalysis = {
         chartEl.parentElement.style.display = 'block';
         noDataEl.style.display = 'none';
 
-        // 找最佳成绩
-        let bestRecord = records[0];
-        records.forEach(r => {
-            if (r.timeMs < bestRecord.timeMs) bestRecord = r;
-        });
+        // 找最佳成绩（跳绳取次数最多，其余取用时最短）
+        const bestRecord = this._bestOf(records);
 
         // 绘制图表
         const labels = records.map(r => Utils.formatDateShort(r.date));
-        const data = records.map(r => r.timeMs / 1000); // 转为秒
+        const isCount = this._isCountProject();
+        const data = records.map(r => isCount ? (r.count || 0) : r.timeMs / 1000); // 次数 或 秒
 
         // 点颜色：最佳用金色
         const pointColors = records.map(r => r.id === bestRecord.id ? '#f59e0b' : '#0ea5e9');
@@ -1438,6 +1588,7 @@ const PageAnalysis = {
                     tooltip: {
                         callbacks: {
                             label: (ctx) => {
+                                if (isCount) return `次数: ${ctx.raw} 次`;
                                 const ms = ctx.raw * 1000;
                                 const t = Utils.msToTime(ms);
                                 return `用时: ${t.full}`;
@@ -1451,12 +1602,13 @@ const PageAnalysis = {
                         ticks: { font: { size: 11 }, color: '#94a3b8', maxRotation: 0 }
                     },
                     y: {
-                        reverse: true,
+                        reverse: !isCount,
                         grid: { color: '#f1f5f9' },
                         ticks: {
                             font: { size: 11 },
                             color: '#94a3b8',
                             callback: (val) => {
+                                if (isCount) return val + ' 次';
                                 const ms = val * 1000;
                                 const t = Utils.msToTime(ms);
                                 return t.main + '.' + t.ms;
@@ -1464,7 +1616,7 @@ const PageAnalysis = {
                         },
                         title: {
                             display: true,
-                            text: '用时（越低越好）',
+                            text: isCount ? '次数（越多越好）' : '用时（越低越好）',
                             font: { size: 11 },
                             color: '#94a3b8'
                         }
@@ -1483,6 +1635,8 @@ const PageAnalysis = {
     renderProgress(records, bestRecord) {
         const container = document.getElementById('progress-card');
         const latest = records[records.length - 1];
+        const isCount = this._isCountProject();
+        const m = r => this._metricOf(r);
 
         let html = `<div class="progress-title">最近一次成绩对比</div>`;
 
@@ -1498,7 +1652,6 @@ const PageAnalysis = {
                     </div>
                 </div>
             `;
-            // 与最佳成绩对比
             html += `
                 <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border-light);">
                     <div class="progress-title">与历史最佳对比</div>
@@ -1515,13 +1668,19 @@ const PageAnalysis = {
             `;
         } else {
             const prev = records[records.length - 2];
-            const diff = latest.timeMs - prev.timeMs;
-            const rate = prev.timeMs > 0 ? Math.abs(diff) / prev.timeMs * 100 : 0;
+            const diff = m(latest) - m(prev);
+            const base = Math.abs(m(prev)) || 1;
+            const rate = Math.abs(diff) / base * 100;
             const rateTxt = rate.toFixed(1) + '%';
+            const improved = isCount ? diff > 0 : diff < 0;
 
-            if (diff < 0) {
-                // 进步：红色朝上箭头
+            const deltaTxt = () => {
+                if (isCount) return Math.abs(diff) + ' 次';
                 const t = Utils.msToTime(Math.abs(diff));
+                return `${t.main}.${t.ms}`;
+            };
+
+            if (improved) {
                 html += `
                     <div class="progress-main">
                         <div class="progress-arrow improve">
@@ -1529,25 +1688,11 @@ const PageAnalysis = {
                         </div>
                         <div class="progress-text">
                             <div class="progress-status improve">进步 ${rateTxt} ↑</div>
-                            <div class="progress-desc">比上一次快了 ${t.main}.${t.ms}</div>
+                            <div class="progress-desc">${isCount ? '比上一次多了 ' + deltaTxt() : '比上一次快了 ' + deltaTxt()}</div>
                         </div>
                     </div>
                 `;
-            } else if (diff > 0) {
-                // 退步：绿色朝下箭头
-                const t = Utils.msToTime(diff);
-                html += `
-                    <div class="progress-main">
-                        <div class="progress-arrow regress">
-                            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
-                        </div>
-                        <div class="progress-text">
-                            <div class="progress-status regress">退步 ${rateTxt} ↓</div>
-                            <div class="progress-desc">比上一次慢了 ${t.main}.${t.ms}</div>
-                        </div>
-                    </div>
-                `;
-            } else {
+            } else if (diff === 0) {
                 html += `
                     <div class="progress-main">
                         <div class="progress-arrow same">
@@ -1559,10 +1704,22 @@ const PageAnalysis = {
                         </div>
                     </div>
                 `;
+            } else {
+                html += `
+                    <div class="progress-main">
+                        <div class="progress-arrow regress">
+                            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+                        </div>
+                        <div class="progress-text">
+                            <div class="progress-status regress">退步 ${rateTxt} ↓</div>
+                            <div class="progress-desc">${isCount ? '比上一次少了 ' + deltaTxt() : '比上一次慢了 ' + deltaTxt()}</div>
+                        </div>
+                    </div>
+                `;
             }
 
             // 与历史最佳对比
-            const bestDiff = latest.timeMs - bestRecord.timeMs;
+            const bestDiff = m(latest) - m(bestRecord);
             if (bestDiff === 0) {
                 html += `
                     <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border-light);">
@@ -1579,9 +1736,9 @@ const PageAnalysis = {
                     </div>
                 `;
             } else {
-                const t = Utils.msToTime(Math.abs(bestDiff));
-                const bestRate = bestRecord.timeMs > 0 ? bestDiff / bestRecord.timeMs * 100 : 0;
+                const bestRate = Math.abs(bestDiff) / (Math.abs(m(bestRecord)) || 1) * 100;
                 const bestRateTxt = bestRate.toFixed(1) + '%';
+                const bestGap = isCount ? Math.abs(bestDiff) + ' 次' : Utils.msToTime(Math.abs(bestDiff)).full;
                 html += `
                     <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border-light);">
                         <div class="progress-title">与历史最佳对比</div>
@@ -1591,7 +1748,7 @@ const PageAnalysis = {
                             </div>
                             <div class="progress-text">
                                 <div class="progress-status regress">退步 ${bestRateTxt} ↓</div>
-                                <div class="progress-desc">距历史最佳成绩还差 ${t.full}</div>
+                                <div class="progress-desc">距历史最佳成绩还差 ${bestGap}</div>
                             </div>
                         </div>
                     </div>
@@ -1604,18 +1761,28 @@ const PageAnalysis = {
 
     renderSummary(records, bestRecord) {
         const container = document.getElementById('data-summary');
-        const bestT = Utils.msToTime(bestRecord.timeMs);
-        const avgMs = records.reduce((s, r) => s + r.timeMs, 0) / records.length;
-        const avgT = Utils.msToTime(Math.round(avgMs));
+        const isCount = this._isCountProject();
+        let bestTxt, avgTxt;
+        if (isCount) {
+            bestTxt = (bestRecord.count || 0) + ' 次';
+            const avg = Math.round(records.reduce((s, r) => s + (r.count || 0), 0) / records.length);
+            avgTxt = avg + ' 次';
+        } else {
+            const bestT = Utils.msToTime(bestRecord.timeMs);
+            const avgMs = records.reduce((s, r) => s + r.timeMs, 0) / records.length;
+            const avgT = Utils.msToTime(Math.round(avgMs));
+            bestTxt = `${bestT.main}<span class="ms-part">.${bestT.ms}</span>`;
+            avgTxt = `${avgT.main}<span class="ms-part">.${avgT.ms}</span>`;
+        }
 
         container.innerHTML = `
             <div class="summary-item best">
-                <div class="summary-value">${bestT.main}<span class="ms-part">.${bestT.ms}</span></div>
-                <div class="summary-label">最佳成绩</div>
+                <div class="summary-value">${bestTxt}</div>
+                <div class="summary-label">${isCount ? '最多次数' : '最佳成绩'}</div>
             </div>
             <div class="summary-item">
-                <div class="summary-value">${avgT.main}<span class="ms-part">.${avgT.ms}</span></div>
-                <div class="summary-label">平均成绩</div>
+                <div class="summary-value">${avgTxt}</div>
+                <div class="summary-label">${isCount ? '平均次数' : '平均成绩'}</div>
             </div>
             <div class="summary-item">
                 <div class="summary-value">${records.length}</div>
@@ -1713,10 +1880,10 @@ const PageProfile = {
     },
 
     async cloudUpload(card) {
-        const records = Store.getRecords();
         try {
-            await CloudAPI.sync(records);
-            this.cloudMsg(card, `已上传 ${records.length} 条记录到云端`, false);
+            const p = buildProfile();
+            await CloudAPI.syncProfile(p);
+            this.cloudMsg(card, `已上传 ${p.records.length} 条记录、${p.checkins.length} 次打卡、${p.blindBoxes.length} 个盲盒到云端`, false);
             Toast.show('已同步到云端', { type: 'success' });
         } catch (e) {
             this.cloudMsg(card, e.message || '上传失败', true);
@@ -1725,13 +1892,10 @@ const PageProfile = {
 
     async cloudDownload(card) {
         try {
-            const data = await CloudAPI.getRecords();
-            const recs = (data.records || []).map(r => ({
-                id: r.id, stroke: r.stroke, distance: r.distance, timeMs: r.timeMs,
-                date: r.date, type: r.type || 'training', eventName: r.eventName || '', note: r.note || '', createdAt: r.createdAt || Date.now()
-            }));
-            Store.mergeCloud(recs);
-            this.cloudMsg(card, `已从云端下载 ${recs.length} 条记录`, false);
+            const data = await CloudAPI.getProfile();
+            Store.mergeProfile(data);
+            const recs = (data.records || []);
+            this.cloudMsg(card, `已从云端下载 ${recs.length} 条记录、${ (data.checkins||[]).length } 次打卡、${ (data.blindBoxes||[]).length } 个盲盒`, false);
             Toast.show('已从云端同步', { type: 'success' });
         } catch (e) {
             this.cloudMsg(card, e.message || '下载失败', true);
@@ -1742,7 +1906,7 @@ const PageProfile = {
         this.cloudMsg(card, '同步中…');
         const n = await syncNow();
         if (n < 0) { this.cloudMsg(card, '同步失败，请检查网络或重新登录', true); return; }
-        _lastSyncCount = n;
+        _lastSyncSig = syncSignature();
         this.cloudMsg(card, `同步完成，当前共 ${n} 条记录`, false);
         Toast.show('已与云端同步', { type: 'success' });
         // 刷新当前数据页，立即看到另一端的最新记录
@@ -1765,10 +1929,16 @@ const ModalDetail = {
         const sc = Utils.strokeColor(record.stroke);
         const t = Utils.msToTime(record.timeMs);
 
-        // 检查是否是最佳
+        // 检查是否是最佳（跳绳按次数，其余按用时）
         const sameProject = records.filter(r => r.stroke === record.stroke && r.distance === record.distance);
-        const bestMs = Math.min(...sameProject.map(r => r.timeMs));
-        const isPB = record.timeMs === bestMs;
+        let isPB;
+        if (record.category === 'rope') {
+            const maxCount = sameProject.length ? Math.max(...sameProject.map(r => r.count || 0)) : (record.count || 0);
+            isPB = (record.count || 0) === maxCount;
+        } else {
+            const bestMs = Math.min(...sameProject.map(r => r.timeMs));
+            isPB = record.timeMs === bestMs;
+        }
 
         const body = document.getElementById('detail-body');
         const ti = Utils.typeInfo(record.type);
@@ -1788,14 +1958,23 @@ const ModalDetail = {
                     <div class="detail-note">${this.escapeHtml(record.eventName)}</div>
                 </div>
             ` : ''}
-            <div class="detail-section">
-                <div class="detail-label">距离</div>
-                <div class="detail-value">${record.distance} 米</div>
-            </div>
-            <div class="detail-section" style="text-align:center;">
-                <div class="detail-label">用时</div>
-                <div class="detail-time-large">${t.main}<span class="ms-part">.${t.ms}</span></div>
-            </div>
+            ${record.category === 'rope' ? `
+                <div class="detail-section">
+                    <div class="detail-label">次数</div>
+                    <div class="detail-value">${record.count} 次</div>
+                </div>
+            ` : `
+                <div class="detail-section">
+                    <div class="detail-label">距离</div>
+                    <div class="detail-value">${record.distance >= 1000 ? (record.distance / 1000).toFixed(1) + ' km' : record.distance + ' 米'}</div>
+                </div>
+            `}
+            ${record.timeMs > 0 ? `
+                <div class="detail-section" style="text-align:center;">
+                    <div class="detail-label">用时</div>
+                    <div class="detail-time-large">${t.main}<span class="ms-part">.${t.ms}</span></div>
+                </div>
+            ` : ''}
             <div class="detail-section">
                 <div class="detail-label">日期</div>
                 <div class="detail-value">${Utils.formatDate(record.date)}</div>
@@ -2205,6 +2384,17 @@ function bindEvents() {
     document.getElementById('home-view-all').addEventListener('click', () => Router.navigate('history'));
 
     /* --- 记录页 --- */
+    // 运动项目切换
+    document.querySelectorAll('#category-options .option-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            PageRecord.selectedCategory = btn.dataset.category;
+            document.querySelectorAll('#category-options .option-btn').forEach(b => b.classList.remove('selected'));
+            btn.classList.add('selected');
+            PageRecord.updateCategoryUI();
+            PageRecord.updateTypeUI();
+        });
+    });
+
     // 泳姿选择
     document.querySelectorAll('#stroke-options .option-btn').forEach(btn => {
         btn.addEventListener('click', () => {
