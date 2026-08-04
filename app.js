@@ -1105,6 +1105,7 @@ const PageAnalysis = {
                         ticks: { font: { size: 11 }, color: '#94a3b8', maxRotation: 0 }
                     },
                     y: {
+                        reverse: true,
                         grid: { color: '#f1f5f9' },
                         ticks: {
                             font: { size: 11 },
