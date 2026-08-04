@@ -558,8 +558,8 @@ body::before {
     display: flex; align-items: center; justify-content: center; color: #fff;
 }
 .progress-arrow svg { width: 24px; height: 24px; }
-.progress-arrow.improve { background: rgba(52,211,153,0.4); }
-.progress-arrow.regress { background: rgba(251,146,60,0.4); }
+.progress-arrow.improve { background: rgba(239,68,68,0.85); }   /* 进步 红 */
+.progress-arrow.regress { background: rgba(34,197,94,0.85); }    /* 退步 绿 */
 .progress-arrow.same { background: rgba(255,255,255,0.22); }
 .progress-text { flex: 1; min-width: 0; }
 .progress-status { font-family: var(--font-fun); font-size: 22px; line-height: 1.2; }

@@ -897,8 +897,12 @@ const PageHistory = {
         if (filterDistance) filtered = filtered.filter(r => r.distance === parseInt(filterDistance));
         if (filterType) filtered = filtered.filter(r => (r.type || 'training') === filterType);
 
-        // 按日期倒序
+        // 按泳姿、距离分组排列（同组按日期倒序，最新在前）
+        const STROKE_ORDER = { '自由泳': 0, '蛙泳': 1, '仰泳': 2, '蝶泳': 3, '混合泳': 4 };
         filtered.sort((a, b) => {
+            const so = (STROKE_ORDER[a.stroke] ?? 99) - (STROKE_ORDER[b.stroke] ?? 99);
+            if (so !== 0) return so;
+            if (a.distance !== b.distance) return a.distance - b.distance;
             if (b.date !== a.date) return b.date.localeCompare(a.date);
             return b.createdAt - a.createdAt;
         });
@@ -1165,32 +1169,34 @@ const PageAnalysis = {
         } else {
             const prev = records[records.length - 2];
             const diff = latest.timeMs - prev.timeMs;
+            const rate = prev.timeMs > 0 ? Math.abs(diff) / prev.timeMs * 100 : 0;
+            const rateTxt = rate.toFixed(1) + '%';
 
             if (diff < 0) {
-                // 进步
+                // 进步：红色朝上箭头
                 const t = Utils.msToTime(Math.abs(diff));
                 html += `
                     <div class="progress-main">
                         <div class="progress-arrow improve">
-                            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+                            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
                         </div>
                         <div class="progress-text">
-                            <div class="progress-status improve">进步 ${t.main}.${t.ms}</div>
-                            <div class="progress-desc">比上一次成绩提高了</div>
+                            <div class="progress-status improve">进步 ${rateTxt} ↑</div>
+                            <div class="progress-desc">比上一次快了 ${t.main}.${t.ms}</div>
                         </div>
                     </div>
                 `;
             } else if (diff > 0) {
-                // 退步
+                // 退步：绿色朝下箭头
                 const t = Utils.msToTime(diff);
                 html += `
                     <div class="progress-main">
                         <div class="progress-arrow regress">
-                            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+                            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
                         </div>
                         <div class="progress-text">
-                            <div class="progress-status regress">退步 ${t.main}.${t.ms}</div>
-                            <div class="progress-desc">比上一次成绩慢了</div>
+                            <div class="progress-status regress">退步 ${rateTxt} ↓</div>
+                            <div class="progress-desc">比上一次慢了 ${t.main}.${t.ms}</div>
                         </div>
                     </div>
                 `;
@@ -1227,15 +1233,17 @@ const PageAnalysis = {
                 `;
             } else {
                 const t = Utils.msToTime(Math.abs(bestDiff));
+                const bestRate = bestRecord.timeMs > 0 ? bestDiff / bestRecord.timeMs * 100 : 0;
+                const bestRateTxt = bestRate.toFixed(1) + '%';
                 html += `
                     <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border-light);">
                         <div class="progress-title">与历史最佳对比</div>
                         <div class="progress-main">
                             <div class="progress-arrow regress">
-                                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+                                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
                             </div>
                             <div class="progress-text">
-                                <div class="progress-status regress">差 ${t.main}.${t.ms}</div>
+                                <div class="progress-status regress">退步 ${bestRateTxt} ↓</div>
                                 <div class="progress-desc">距历史最佳成绩还差 ${t.full}</div>
                             </div>
                         </div>
