@@ -8,8 +8,8 @@ OUT = "icons"
 def lerp(a, b, t):
     return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
-TOP = (56, 189, 248)     # #38bdf8
-BOTTOM = (2, 132, 199)   # #0284c7
+TOP = (59, 158, 255)     # #3B9EFF 现代亮蓝
+BOTTOM = (20, 87, 230)    # #1457E6 深蓝
 WHITE = (255, 255, 255)
 
 def gradient(size):

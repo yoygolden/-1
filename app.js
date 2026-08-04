@@ -536,8 +536,9 @@ const PageHome = {
         const totalTime = records.reduce((s, r) => s + r.timeMs, 0);
 
         document.getElementById('home-total-count').textContent = totalCount;
-        document.getElementById('home-total-distance').innerHTML = `${Utils.mToKm(totalDistance)}<span class="stat-unit">km</span>`;
-        document.getElementById('home-total-time').innerHTML = `${Utils.msToHours(totalTime)}<span class="stat-unit">h</span>`;
+
+        // 进步情况分析
+        this.renderProgressOverview(records);
 
         // 本月统计
         const now = new Date();
@@ -557,6 +558,107 @@ const PageHome = {
 
         // 最近记录
         this.renderRecent(records);
+    },
+
+    computeProgressOverview(records) {
+        const groups = {};
+        records.forEach(r => {
+            const key = r.stroke + '|' + r.distance;
+            (groups[key] = groups[key] || []).push(r);
+        });
+        // 按 日期+创建顺序 升序排序的辅助
+        const sortByDate = arr => arr.slice().sort((a, b) =>
+            a.date === b.date ? (a.createdAt || 0) - (b.createdAt || 0) : a.date.localeCompare(b.date));
+
+        let improve = 0, regress = 0, same = 0, rateSum = 0, rateCount = 0;
+
+        Object.values(groups).forEach(g => {
+            const s = sortByDate(g);
+            if (s.length < 2) return;
+            const prev = s[s.length - 2], latest = s[s.length - 1];
+            const diff = latest.timeMs - prev.timeMs; // 用时减少 = 进步
+            if (diff < 0) {
+                improve++;
+                if (prev.timeMs > 0) { rateSum += Math.abs(diff) / prev.timeMs * 100; rateCount++; }
+            } else if (diff > 0) {
+                regress++;
+            } else {
+                same++;
+            }
+        });
+
+        const avgRate = rateCount > 0 ? rateSum / rateCount : 0;
+
+        // 最近一条记录的同项趋势
+        const allSorted = sortByDate(records);
+        let lastTrend = null;
+        if (allSorted.length >= 2) {
+            const latest = allSorted[allSorted.length - 1];
+            const g = sortByDate(groups[latest.stroke + '|' + latest.distance] || []);
+            if (g.length >= 2) {
+                const prev = g[g.length - 2];
+                const diff = latest.timeMs - prev.timeMs;
+                const rate = prev.timeMs > 0 ? Math.abs(diff) / prev.timeMs * 100 : 0;
+                const t = Utils.msToTime(Math.abs(diff));
+                if (diff < 0) lastTrend = { type: 'improve', rate, stroke: latest.stroke, distance: latest.distance, t };
+                else if (diff > 0) lastTrend = { type: 'regress', rate, stroke: latest.stroke, distance: latest.distance, t };
+                else lastTrend = { type: 'same', stroke: latest.stroke, distance: latest.distance };
+            }
+        }
+        return { improve, regress, same, avgRate, lastTrend, series: improve + regress + same };
+    },
+
+    renderProgressOverview(records) {
+        const el = document.getElementById('home-progress-overview');
+        if (!el) return;
+
+        if (records.length < 2) {
+            el.innerHTML = `<div class="progress-ov-empty">记录达到 2 条后，这里会显示你的进步情况分析 📈</div>`;
+            return;
+        }
+
+        const s = this.computeProgressOverview(records);
+        const rateTxt = s.avgRate.toFixed(1) + '%';
+        const overallUp = s.improve >= s.regress;
+
+        let summary = '';
+        if (s.lastTrend) {
+            const t = s.lastTrend;
+            if (t.type === 'improve') {
+                summary = `<div class="progress-ov-summary">
+                    <span class="progress-arrow improve"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 19V5M5 12l7-7 7 7"/></svg></span>
+                    <span>最近一次 <b>${t.stroke} ${t.distance}m</b> 进步 ${t.rate.toFixed(1)}% ↑（快了 ${t.t.main}.${t.t.ms}）</span>
+                </div>`;
+            } else if (t.type === 'regress') {
+                summary = `<div class="progress-ov-summary">
+                    <span class="progress-arrow regress"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12l7 7 7-7"/></svg></span>
+                    <span>最近一次 <b>${t.stroke} ${t.distance}m</b> 退步 ${t.rate.toFixed(1)}% ↓（慢了 ${t.t.main}.${t.t.ms}）</span>
+                </div>`;
+            } else {
+                summary = `<div class="progress-ov-summary">
+                    <span class="progress-arrow same"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14"/></svg></span>
+                    <span>最近一次 <b>${t.stroke} ${t.distance}m</b> 成绩持平</span>
+                </div>`;
+            }
+        }
+
+        el.innerHTML = `
+            <div class="progress-ov-grid">
+                <div class="progress-ov-item">
+                    <div class="progress-ov-value improve">${s.improve}</div>
+                    <div class="progress-ov-label">进步次数</div>
+                </div>
+                <div class="progress-ov-item">
+                    <div class="progress-ov-value regress">${s.regress}</div>
+                    <div class="progress-ov-label">退步次数</div>
+                </div>
+                <div class="progress-ov-item">
+                    <div class="progress-ov-value ${overallUp ? 'improve' : 'regress'}">${rateTxt}</div>
+                    <div class="progress-ov-label">平均进步率</div>
+                </div>
+            </div>
+            ${summary}
+        `;
     },
 
     renderBestCards(records) {

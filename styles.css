@@ -3,21 +3,21 @@
  * 明亮配色 · 圆润大圆角 · 卡通字体 · 动物化泳姿
  * ============================================================ */
 
-/* ==================== 卡通配色变量 ==================== */
+/* ==================== 现代蓝调配色变量 ==================== */
 :root {
-    /* 主色：天空蓝（海豚 / 自由泳） */
-    --sky: #38BDF8;
-    --sky-deep: #0EA5E9;
-    --sky-bg: #E0F2FE;
-    /* 蛙泳绿 */
-    --mint: #34D399;
-    --mint-bg: #D1FAE5;
-    /* 仰泳橙（水獭） */
-    --coral: #FB923C;
-    --coral-bg: #FFEDD5;
-    /* 蝶泳紫（蝴蝶） */
-    --grape: #A78BFA;
-    --grape-bg: #EDE9FE;
+    /* 主色：现代蓝（海豚 / 自由泳） */
+    --sky: #2E9BFF;
+    --sky-deep: #1457E6;
+    --sky-bg: #E8F3FF;
+    /* 蛙泳青绿（teal） */
+    --mint: #2DD4BF;
+    --mint-bg: #D7FAF5;
+    /* 仰泳珊瑚粉（现代粉调） */
+    --coral: #FB7185;
+    --coral-bg: #FFE8EC;
+    /* 蝶泳紫罗兰（violet） */
+    --grape: #8B5CF6;
+    --grape-bg: #EDE7FF;
     /* 混合泳玫红（全能） */
     --rose: #F472B6;
     --rose-bg: #FCE7F3;
@@ -25,20 +25,20 @@
     --sun: #FBBF24;
     --pink: #F472B6;
 
-    /* 背景与文字 */
-    --cream: #FFF8EE;
+    /* 背景与文字：冷调蓝白 */
+    --cream: #F1F7FF;
     --card: #FFFFFF;
-    --ink: #4A3B2A;
-    --ink-soft: #8B7A66;
-    --ink-faint: #B6A692;
-    --line: #F1E6D8;
-    --line-soft: #FBF3E9;
+    --ink: #102A43;
+    --ink-soft: #5B7290;
+    --ink-faint: #94A7BD;
+    --line: #E3EEFB;
+    --line-soft: #F0F7FE;
 
-    /* 阴影（柔和彩色） */
-    --shadow-sm: 0 2px 8px rgba(74, 59, 42, 0.06);
-    --shadow-md: 0 8px 22px rgba(56, 189, 248, 0.14);
-    --shadow-lg: 0 14px 36px rgba(56, 189, 248, 0.22);
-    --shadow-warm: 0 10px 26px rgba(251, 146, 60, 0.18);
+    /* 阴影（柔和蓝色调） */
+    --shadow-sm: 0 2px 8px rgba(16, 42, 67, 0.06);
+    --shadow-md: 0 8px 22px rgba(46, 155, 255, 0.16);
+    --shadow-lg: 0 14px 36px rgba(46, 155, 255, 0.24);
+    --shadow-warm: 0 10px 26px rgba(251, 113, 133, 0.18);
 
     /* 圆角 */
     --r-sm: 12px;
@@ -60,7 +60,7 @@
     /* 兼容别名（供 JS 内联样式引用，避免旧变量名失效） */
     --gold: #FBBF24;
     --gold-bg: #FEF3C7;
-    --border-light: #F1E6D8;
+    --border-light: #E3EEFB;
     --primary-bg: var(--sky-bg);
     --primary: var(--sky);
     --green-bg: var(--mint-bg);
@@ -103,7 +103,7 @@ html, body {
     background: var(--cream);
 }
 
-/* 卡通背景：天空 → 水面奶油渐变 + 气泡点阵 */
+/* 现代背景：蓝调极光渐变 + 气泡点阵 */
 body::before {
     content: "";
     position: fixed;
@@ -111,12 +111,12 @@ body::before {
     z-index: 0;
     pointer-events: none;
     background:
-        radial-gradient(circle at 12% 18%, rgba(56,189,248,0.10) 0 7px, transparent 8px),
-        radial-gradient(circle at 82% 12%, rgba(167,139,250,0.12) 0 9px, transparent 10px),
-        radial-gradient(circle at 70% 32%, rgba(251,146,60,0.10) 0 6px, transparent 7px),
-        radial-gradient(circle at 25% 55%, rgba(52,211,153,0.10) 0 8px, transparent 9px),
-        radial-gradient(circle at 90% 62%, rgba(56,189,248,0.09) 0 7px, transparent 8px),
-        linear-gradient(180deg, #CDEBFF 0%, #E7F6FF 22%, var(--cream) 46%);
+        radial-gradient(circle at 15% 12%, rgba(46,155,255,0.18) 0 9px, transparent 10px),
+        radial-gradient(circle at 85% 16%, rgba(139,92,246,0.16) 0 11px, transparent 12px),
+        radial-gradient(circle at 72% 38%, rgba(45,212,191,0.13) 0 8px, transparent 9px),
+        radial-gradient(circle at 22% 58%, rgba(46,155,255,0.13) 0 9px, transparent 10px),
+        radial-gradient(circle at 92% 66%, rgba(244,114,182,0.10) 0 7px, transparent 8px),
+        linear-gradient(180deg, #DCEEFF 0%, #EAF5FF 28%, var(--cream) 54%);
 }
 
 #app {
@@ -316,6 +316,52 @@ body::before {
 .stat-value { font-family: var(--font-fun); font-size: 24px; font-weight: 400; color: var(--ink); line-height: 1.1; }
 .stat-unit { font-size: 12px; color: var(--ink-soft); margin-left: 1px; }
 .stat-label { font-size: 11px; color: var(--ink-soft); margin-top: 3px; font-weight: 600; }
+.stat-card-wide { flex: 1; }
+
+/* 进步情况分析（首页） */
+.progress-overview { padding: 2px 2px 4px; }
+.progress-ov-grid {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+.progress-ov-item {
+    flex: 1;
+    text-align: center;
+    background: var(--card);
+    border: 1.5px solid var(--line);
+    border-radius: var(--r-md);
+    padding: 14px 6px 11px;
+    box-shadow: var(--shadow-sm);
+}
+.progress-ov-value {
+    font-family: var(--font-fun);
+    font-size: 26px;
+    font-weight: 400;
+    line-height: 1.1;
+    color: var(--ink);
+}
+.progress-ov-value.improve { color: #EF4444; }
+.progress-ov-value.regress { color: #22C55E; }
+.progress-ov-label { font-size: 11px; color: var(--ink-soft); margin-top: 4px; font-weight: 600; }
+.progress-ov-summary {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    background: var(--sky-bg);
+    border-radius: var(--r-md);
+    padding: 11px 13px;
+    font-size: 13px;
+    color: var(--ink);
+    line-height: 1.45;
+}
+.progress-ov-summary b { color: var(--sky-deep); }
+.progress-ov-empty {
+    text-align: center;
+    color: var(--ink-soft);
+    font-size: 13px;
+    padding: 18px 10px;
+}
 
 /* 本月统计 */
 .month-stats {

@@ -18,8 +18,8 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <title>SwimTrack - 游泳成绩追踪</title>
     <!-- Chart.js 已本地自托管（vendor/chart.umd.min.js），不再依赖被墙的 CDN -->
-    <link rel="stylesheet" href="styles.css?v=6">
-    <script src="vendor/chart.umd.min.js?v=6"></script>
+    <link rel="stylesheet" href="styles.css?v=7">
+    <script src="vendor/chart.umd.min.js?v=7"></script>
 </head>
 <body>
     <div id="app">
@@ -95,26 +95,22 @@
                 <div class="page-content">
                     <!-- 核心数据卡片 -->
                     <section class="stats-cards">
-                        <div class="stat-card">
+                        <div class="stat-card stat-card-wide">
                             <div class="stat-icon stat-icon-blue">
                                 <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12h20M2 6h20M2 18h20"/></svg>
                             </div>
                             <div class="stat-value" id="home-total-count">0</div>
                             <div class="stat-label">总游泳次数</div>
                         </div>
-                        <div class="stat-card">
-                            <div class="stat-icon stat-icon-green">
-                                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20"/></svg>
-                            </div>
-                            <div class="stat-value" id="home-total-distance">0<span class="stat-unit">km</span></div>
-                            <div class="stat-label">累计游距</div>
+                    </section>
+
+                    <!-- 进步情况分析 -->
+                    <section class="section-block">
+                        <div class="section-title">
+                            <h2>📈 进步情况分析</h2>
                         </div>
-                        <div class="stat-card">
-                            <div class="stat-icon stat-icon-orange">
-                                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-                            </div>
-                            <div class="stat-value" id="home-total-time">0<span class="stat-unit">h</span></div>
-                            <div class="stat-label">总用时</div>
+                        <div class="progress-overview" id="home-progress-overview">
+                            <!-- JS填充 -->
                         </div>
                     </section>
 
@@ -752,6 +748,6 @@
         </div>
 
     </div><!-- /app -->
-    <script src="app.js?v=6"></script>
+    <script src="app.js?v=7"></script>
 </body>
 </html>
