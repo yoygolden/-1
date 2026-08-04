@@ -383,6 +383,37 @@ body::before {
 .section-title h2 { font-family: var(--font-fun); font-size: 18px; font-weight: 400; color: var(--ink); }
 .link-btn { background: none; border: none; color: var(--sky-deep); font-size: 13px; font-weight: 700; cursor: pointer; font-family: var(--font-fun); }
 
+/* 三大运动项目卡片 */
+.category-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.cat-card {
+    background: var(--card);
+    border: 2px solid var(--line-soft);
+    border-radius: var(--r-md);
+    padding: 14px 8px 12px;
+    text-align: center;
+    box-shadow: var(--shadow-sm);
+    cursor: pointer;
+    position: relative; overflow: hidden;
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.cat-card:active { transform: scale(0.97); }
+.cat-card::before {
+    content: ""; position: absolute; left: 0; top: 0; right: 0; height: 4px;
+}
+.cat-card.cat-swim::before { background: var(--sky); }
+.cat-card.cat-run::before { background: var(--mint); }
+.cat-card.cat-rope::before { background: var(--grape); }
+.cat-card-header { display: flex; align-items: center; justify-content: center; gap: 5px; margin-bottom: 6px; }
+.cat-emoji { font-size: 19px; line-height: 1; }
+.cat-name { font-family: var(--font-fun); font-size: 15px; color: var(--ink); }
+.cat-count { font-family: var(--font-fun); font-size: 30px; color: var(--ink); line-height: 1.05; }
+.cat-count-unit { font-size: 12px; color: var(--ink-soft); margin-left: 2px; font-family: var(--font-fun); }
+.cat-count-label { font-size: 11px; color: var(--ink-soft); margin-bottom: 8px; font-weight: 600; }
+.cat-sub { display: flex; gap: 6px; }
+.cat-sub-item { flex: 1; background: var(--line-soft); border-radius: 10px; padding: 6px 3px; }
+.cat-sub-val { font-family: var(--font-fun); font-size: 14px; color: var(--ink); line-height: 1.1; }
+.cat-sub-label { font-size: 10px; color: var(--ink-faint); margin-top: 2px; }
+
 /* 最佳成绩卡片 */
 .best-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .best-card {

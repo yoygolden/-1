@@ -18,8 +18,8 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <title>SwimTrack - 游泳成绩追踪</title>
     <!-- Chart.js 已本地自托管（vendor/chart.umd.min.js），不再依赖被墙的 CDN -->
-    <link rel="stylesheet" href="styles.css?v=11">
-    <script src="vendor/chart.umd.min.js?v=11"></script>
+    <link rel="stylesheet" href="styles.css?v=12">
+    <script src="vendor/chart.umd.min.js?v=12"></script>
 </head>
 <body>
     <div id="app">
@@ -100,6 +100,16 @@
                         </div>
                     </section>
 
+                    <!-- 三大运动项目 -->
+                    <section class="section-block">
+                        <div class="section-title">
+                            <h2>🏊🏃🤾 运动项目</h2>
+                        </div>
+                        <div class="category-cards" id="home-category-cards">
+                            <!-- JS填充 -->
+                        </div>
+                    </section>
+
                     <!-- 进步情况分析 -->
                     <section class="section-block">
                         <div class="section-title">
@@ -120,37 +130,6 @@
                         <div class="month-stat-item">
                             <span class="month-stat-value" id="home-month-distance">0<span class="stat-unit">km</span></span>
                             <span class="month-stat-label">本月距离</span>
-                        </div>
-                    </section>
-
-                    <!-- 各项目最佳成绩 -->
-                    <section class="section-block">
-                        <div class="section-title">
-                            <h2>最佳成绩</h2>
-                        </div>
-                        <div class="best-cards" id="home-best-cards">
-                            <!-- JS填充 -->
-                        </div>
-                    </section>
-
-                    <!-- 项目分布 -->
-                    <section class="section-block">
-                        <div class="section-title">
-                            <h2>项目分布</h2>
-                        </div>
-                        <div class="stroke-distribution" id="home-stroke-distribution">
-                            <!-- JS填充 -->
-                        </div>
-                    </section>
-
-                    <!-- 最近记录 -->
-                    <section class="section-block">
-                        <div class="section-title">
-                            <h2>最近记录</h2>
-                            <button class="link-btn" id="home-view-all">查看全部</button>
-                        </div>
-                        <div class="recent-list" id="home-recent-list">
-                            <!-- JS填充 -->
                         </div>
                     </section>
 
@@ -800,6 +779,6 @@
         </div>
 
     </div><!-- /app -->
-    <script src="app.js?v=11"></script>
+    <script src="app.js?v=12"></script>
 </body>
 </html>

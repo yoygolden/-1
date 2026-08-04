@@ -597,7 +597,7 @@ const Router = {
 
         switch (view) {
             case 'home': PageHome.render(); break;
-            case 'record': PageRecord.render(opts.editingId); break;
+            case 'record': PageRecord.render(opts.editingId, opts.presetCategory); break;
             case 'history': PageHistory.render(); break;
             case 'analysis': PageAnalysis.render(); break;
             case 'gallery': PageGallery.render(); break;
@@ -727,14 +727,8 @@ const PageHome = {
         document.getElementById('home-month-count').textContent = monthRecords.length;
         document.getElementById('home-month-distance').innerHTML = `${Utils.mToKm(monthDistance)}<span class="stat-unit">km</span>`;
 
-        // 各泳姿最佳成绩
-        this.renderBestCards(records);
-
-        // 泳姿分布
-        this.renderDistribution(records);
-
-        // 最近记录
-        this.renderRecent(records);
+        // 三大运动项目卡片
+        this.renderCategoryCards(records);
     },
 
     _dateStr(d) {
@@ -964,173 +958,65 @@ const PageHome = {
         `;
     },
 
-    renderBestCards(records) {
-        const container = document.getElementById('home-best-cards');
-        const strokes = ['自由泳', '蛙泳', '仰泳', '蝶泳', '混合泳', '跑步', '跳绳'];
 
-        // 对每个项目找最佳：游泳/跑步按用时最短；跳绳按次数最多
-        const bests = {};
-        strokes.forEach(stroke => {
-            const strokeRecords = records.filter(r => r.stroke === stroke);
-            if (strokeRecords.length === 0) {
-                bests[stroke] = null;
-                return;
-            }
-            if (stroke === '跳绳') {
-                let best = strokeRecords[0];
-                strokeRecords.forEach(r => { if ((r.count || 0) > (best.count || 0)) best = r; });
-                bests[stroke] = best;
-            } else {
-                let best = strokeRecords[0];
-                strokeRecords.forEach(r => { if (r.timeMs < best.timeMs) best = r; });
-                bests[stroke] = best;
-            }
-        });
+    renderCategoryCards(records) {
+        const container = document.getElementById('home-category-cards');
+        if (!container) return;
 
-        container.innerHTML = strokes.map(stroke => {
-            const sc = Utils.strokeColor(stroke);
-            const best = bests[stroke];
-            if (!best) {
-                return `
-                    <div class="best-card" data-stroke="${stroke}">
-                        <div class="best-card-header">
-                            <span class="stroke-tag ${sc.class}-bg">${sc.emoji}${stroke}</span>
-                        </div>
-                        <div class="best-card-empty">
-                            <p>暂无记录</p>
-                        </div>
-                    </div>
-                `;
-            }
-            if (stroke === '跳绳') {
-                return `
-                    <div class="best-card has-record" data-stroke="${stroke}" data-distance="0">
-                        <div class="best-card-header">
-                            <span class="stroke-tag ${sc.class}-bg">${sc.emoji}${stroke}</span>
-                            <svg class="trophy-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M19 5h-2V3H7v2H5a2 2 0 00-2 2v3a4 4 0 003.5 3.97V18a2 2 0 002 2h2v1h4v-1h2a2 2 0 002-2v-4.03A4 4 0 0021 10V7a2 2 0 00-2-2zM5 10V7h2v5.83A2 2 0 015 10zm14 0a2 2 0 01-2 2.83V7h2v3z"/></svg>
-                        </div>
-                        <div class="best-card-distance">${best.count} 次</div>
-                        <div class="best-card-time">最佳次数</div>
-                        <div class="best-card-date">${Utils.formatDate(best.date)}</div>
-                    </div>
-                `;
-            }
-            const t = Utils.msToTime(best.timeMs);
-            const distText = best.distance >= 1000 ? (best.distance / 1000).toFixed(1) + 'km' : best.distance + '米';
-            return `
-                <div class="best-card has-record" data-stroke="${stroke}" data-distance="${best.distance}">
-                    <div class="best-card-header">
-                        <span class="stroke-tag ${sc.class}-bg">${sc.emoji}${stroke}</span>
-                        <svg class="trophy-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M19 5h-2V3H7v2H5a2 2 0 00-2 2v3a4 4 0 003.5 3.97V18a2 2 0 002 2h2v1h4v-1h2a2 2 0 002-2v-4.03A4 4 0 0021 10V7a2 2 0 00-2-2zM5 10V7h2v5.83A2 2 0 015 10zm14 0a2 2 0 01-2 2.83V7h2v3z"/></svg>
-                    </div>
-                    <div class="best-card-distance">${distText}</div>
-                    <div class="best-card-time">${t.main}.<span class="ms-part">${t.ms}</span></div>
-                    <div class="best-card-date">${Utils.formatDate(best.date)}</div>
-                </div>
-            `;
-        }).join('');
-
-        // 点击跳转分析页
-        container.querySelectorAll('.best-card').forEach(card => {
-            card.addEventListener('click', () => {
-                const stroke = card.dataset.stroke;
-                const distance = card.dataset.distance;
-                PageAnalysis.setProject(stroke, distance || 100);
-                Router.navigate('analysis');
-            });
-        });
-    },
-
-    renderDistribution(records) {
-        const container = document.getElementById('home-stroke-distribution');
-        const strokes = [
-            { name: '自由泳', class: 'freestyle' },
-            { name: '蛙泳', class: 'breaststroke' },
-            { name: '仰泳', class: 'backstroke' },
-            { name: '蝶泳', class: 'butterfly' },
-            { name: '混合泳', class: 'medley' },
-            { name: '跑步', class: 'run' },
-            { name: '跳绳', class: 'rope' }
+        const cats = [
+            { key: 'swim', name: '游泳', emoji: '🏊', cls: 'cat-swim' },
+            { key: 'run', name: '跑步', emoji: '🏃', cls: 'cat-run' },
+            { key: 'rope', name: '跳绳', emoji: '🤾', cls: 'cat-rope' }
         ];
-        const counts = {};
-        strokes.forEach(s => counts[s.name] = 0);
-        records.forEach(r => { if (counts[r.stroke] != null) counts[r.stroke]++; });
-        const max = Math.max(...Object.values(counts), 1);
 
-        if (records.length === 0) {
-            container.innerHTML = '<div class="empty-state"><p>暂无数据</p></div>';
-            return;
-        }
+        container.innerHTML = cats.map(c => {
+            const list = records.filter(r => r.category === c.key);
+            const count = list.length;
 
-        container.innerHTML = strokes.map(s => {
-            const c = counts[s.name];
-            const pct = (c / max * 100);
-            return `
-                <div class="dist-item">
-                    <span class="dist-dot ${s.class}"></span>
-                    <span class="dist-name">${s.name}</span>
-                    <div class="dist-bar-bg">
-                        <div class="dist-bar ${s.class}" style="width: ${pct}%"></div>
-                    </div>
-                    <span class="dist-count">${c}</span>
-                </div>
-            `;
-        }).join('');
-    },
-
-    renderRecent(records) {
-        const container = document.getElementById('home-recent-list');
-        const sorted = [...records].sort((a, b) => {
-            if (b.date !== a.date) return b.date.localeCompare(a.date);
-            return b.createdAt - a.createdAt;
-        });
-        const recent = sorted.slice(0, 5);
-
-        if (recent.length === 0) {
-            container.innerHTML = `
-                <div class="empty-state">
-                    <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="#cbd5e1" stroke-width="1.5"><path d="M2 12h20M2 6h20M2 18h20" stroke-dasharray="3 3"/></svg>
-                    <p>还没有记录</p>
-                    <p class="empty-sub">点击下方 + 按钮开始记录</p>
-                </div>
-            `;
-            return;
-        }
-
-        // 找各项目最佳成绩用于标记（按 泳姿+距离+类型）
-        const bestMap = {};
-        records.forEach(r => {
-            const key = `${r.stroke}-${r.distance}-${r.type || 'training'}`;
-            if (!bestMap[key] || r.timeMs < bestMap[key].timeMs) {
-                bestMap[key] = r;
+            let sub1Val, sub1Label, sub2Val, sub2Label;
+            if (c.key === 'rope') {
+                const totalCount = list.reduce((s, r) => s + (r.count || 0), 0);
+                let best = 0;
+                list.forEach(r => { if ((r.count || 0) > best) best = r.count || 0; });
+                sub1Val = totalCount + ' 次';
+                sub1Label = '累计次数';
+                sub2Val = best + ' 次';
+                sub2Label = '最佳次数';
+            } else {
+                const totalDist = list.reduce((s, r) => s + (r.distance || 0), 0);
+                let bestTime = null;
+                list.forEach(r => { if (r.timeMs > 0 && (bestTime == null || r.timeMs < bestTime)) bestTime = r.timeMs; });
+                sub1Val = Utils.mToKm(totalDist) + ' km';
+                sub1Label = '累计距离';
+                sub2Val = bestTime != null ? Utils.msToTime(bestTime).main : '—';
+                sub2Label = '最快成绩';
             }
-        });
 
-        container.innerHTML = recent.map(r => {
-            const sc = Utils.strokeColor(r.stroke);
-            const isPB = bestMap[`${r.stroke}-${r.distance}-${r.type || 'training'}`]?.id === r.id;
-            const ti = Utils.typeInfo(r.type);
-            let detail;
-            if (r.category === 'rope') detail = `${sc.emoji}${r.stroke}<span>·</span>${r.count} 次`;
-            else detail = `${sc.emoji}${r.stroke}<span>·</span>${r.distance >= 1000 ? (r.distance / 1000).toFixed(1) + 'km' : r.distance + '米'}`;
-            let timeText = '';
-            if (r.timeMs > 0) { const t = Utils.msToTime(r.timeMs); timeText = `${t.main}<span class="ms-part">.${t.ms}</span>`; }
             return `
-                <div class="recent-item ${isPB ? 'recent-item-pb' : ''}" data-id="${r.id}">
-                    <div class="recent-stroke" style="background:${sc.bg};color:${sc.color}">${sc.emoji}</div>
-                    <div class="recent-info">
-                        <div class="recent-date">${Utils.formatDate(r.date)}</div>
-                        <div class="recent-detail">${detail}</div>
-                        <div class="recent-tags"><span class="record-type-badge type-${r.type || 'training'}">${ti.emoji}${ti.short}</span></div>
+                <div class="cat-card ${c.cls}" data-category="${c.key}">
+                    <div class="cat-card-header">
+                        <span class="cat-emoji">${c.emoji}</span>
+                        <span class="cat-name">${c.name}</span>
                     </div>
-                    <div class="recent-time">${timeText}</div>
+                    <div class="cat-count"><span class="cat-count-num">${count}</span><span class="cat-count-unit">次</span></div>
+                    <div class="cat-count-label">总次数</div>
+                    <div class="cat-sub">
+                        <div class="cat-sub-item">
+                            <div class="cat-sub-val">${sub1Val}</div>
+                            <div class="cat-sub-label">${sub1Label}</div>
+                        </div>
+                        <div class="cat-sub-item">
+                            <div class="cat-sub-val">${sub2Val}</div>
+                            <div class="cat-sub-label">${sub2Label}</div>
+                        </div>
+                    </div>
                 </div>
             `;
         }).join('');
 
-        container.querySelectorAll('.recent-item').forEach(item => {
-            item.addEventListener('click', () => {
-                ModalDetail.show(item.dataset.id);
+        container.querySelectorAll('.cat-card').forEach(card => {
+            card.addEventListener('click', () => {
+                Router.navigate('record', { presetCategory: card.dataset.category });
             });
         });
     }
@@ -1144,7 +1030,7 @@ const PageRecord = {
     selectedType: 'training',
     editingId: null,
 
-    render(editingId) {
+    render(editingId, presetCategory) {
         this.editingId = editingId || null;
         document.getElementById('record-page-title').textContent = editingId ? '编辑成绩' : '记录成绩';
 
@@ -1168,7 +1054,7 @@ const PageRecord = {
                 document.getElementById('rope-count').value = this.selectedCategory === 'rope' ? (record.count || '') : '';
             }
         } else {
-            this.selectedCategory = 'swim';
+            this.selectedCategory = presetCategory || 'swim';
             this.selectedStroke = null;
             this.selectedDistance = null;
             this.selectedType = 'training';
@@ -2372,9 +2258,6 @@ function bindEvents() {
 
     // 首页右上角个人中心
     document.getElementById('go-profile-btn').addEventListener('click', () => Router.navigate('profile'));
-
-    // 首页查看全部
-    document.getElementById('home-view-all').addEventListener('click', () => Router.navigate('history'));
 
     /* --- 记录页 --- */
     // 运动项目切换
