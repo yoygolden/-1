@@ -711,13 +711,6 @@ const PageHome = {
 
         const records = Store.getRecords();
 
-        // 核心数据
-        const totalCount = records.length;
-        const totalDistance = records.reduce((s, r) => s + r.distance, 0);
-        const totalTime = records.reduce((s, r) => s + r.timeMs, 0);
-
-        document.getElementById('home-total-count').textContent = totalCount;
-
         // 打卡 / 积分 / 盲盒
         this.renderCheckin();
 
