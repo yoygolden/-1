@@ -100,7 +100,7 @@ const Store = {
         this.updateUser(user => {
             const idx = user.records.findIndex(r => r.id === id);
             if (idx >= 0) {
-                user.records[idx] = { ...user.records[idx], ...data };
+                user.records[idx] = { ...user.records[idx], ...data, updatedAt: Date.now() };
             }
         });
     },
@@ -267,9 +267,14 @@ const CloudAPI = {
 /* ==================== 统一登录（云端优先 + 本地兜底 + 自动迁移） ==================== */
 // 记录变更后，若已登录云端，防抖把本地全量资料（记录+打卡+盲盒）同步到后端（失败静默）
 let _syncTimer = null;
-let _lastSyncSig = ''; // 最近一次同步后的资料签名（记录+打卡+盲盒数量），用于判断是否需要刷新页面
+let _syncing = false; // 并发锁：避免聚焦/定时器/防抖同时发起多次同步互相竞争
+let _lastSyncSig = ''; // 最近一次同步后的资料签名（记录+打卡+盲盒内容），用于判断是否需要刷新页面
 function syncSignature() {
-    return Store.getRecords().length + '|' + Store.getCheckins().length + '|' + Store.getBlindBoxes().length;
+    // 内容级签名：不仅看数量，还看关键字段，编辑已有记录也能触发刷新
+    const recSig = Store.getRecords().map(r => r.id + ':' + (r.updatedAt || r.createdAt || '')).sort().join(',');
+    const ckSig = Store.getCheckins().map(c => c.date + ':' + (c.points || 0)).sort().join(',');
+    const bbSig = Store.getBlindBoxes().map(b => b.id).sort().join(',');
+    return recSig + '|' + ckSig + '|' + bbSig;
 }
 function buildProfile() {
     return {
@@ -278,11 +283,12 @@ function buildProfile() {
         blindBoxes: Store.getBlindBoxes()
     };
 }
+// 本地发生改动时调用：防抖后做一次「双向同步」（先拉云端再推本地），让跨设备改动近实时互通
 function scheduleCloudSync() {
     if (!CloudAPI.connected) return;
     if (_syncTimer) clearTimeout(_syncTimer);
     _syncTimer = setTimeout(() => {
-        CloudAPI.syncProfile(buildProfile()).catch(() => {});
+        onCloudRefresh(); // 双向同步 + 按需刷新当前页
     }, 600);
 }
 
@@ -398,6 +404,8 @@ async function reauthCloud() {
 // 返回同步后的本地记录数；失败（含重连失败）返回 -1
 async function syncNow() {
     if (!CloudAPI.connected) return -1;
+    if (_syncing) return Store.getRecords().length; // 已有同步在进行，直接返回当前本地记录数，避免并发竞争
+    _syncing = true;
     try {
         const data = await CloudAPI.getProfile();
         if (data) Store.mergeProfile(data);
@@ -416,6 +424,8 @@ async function syncNow() {
             }
         }
         return -1;
+    } finally {
+        _syncing = false;
     }
 }
 
@@ -801,6 +811,7 @@ const PageHome = {
         Toast.show('打卡成功 +' + points + ' 积分', { type: 'success', sub: '连续打卡 ' + streak + ' 天' });
         this.renderCheckin();
         this.render();
+        scheduleCloudSync(); // 打卡后立即双向同步，避免只在 30s 轮询才上云
     },
 
     // 抽盲盒：消耗积分，随机稀有度
@@ -825,6 +836,7 @@ const PageHome = {
         Store.addBlindBox(item);
         this.renderCheckin();
         this.showBlindBoxResult(item);
+        scheduleCloudSync(); // 抽盲盒后立即双向同步，确保消耗积分/产出盲盒多端一致
     },
 
     // 展示抽中结果（弹窗）
@@ -1193,7 +1205,7 @@ const PageRecord = {
         const base = this.buildRecordBase();
 
         if (this.editingId) {
-            Store.updateRecord(this.editingId, base);
+            Store.updateRecord(this.editingId, { ...base, updatedAt: Date.now() });
             scheduleCloudSync();
             Toast.show('成绩已更新', { type: 'success' });
             setTimeout(() => Router.navigate('history'), 800);
@@ -2565,6 +2577,18 @@ function init() {
     });
     window.addEventListener('focus', onCloudRefresh);
     setInterval(onCloudRefresh, 30000);
+
+    // 页面卸载/隐藏前尽力把待同步数据推上云端（微信 WebView 切走会挂起定时器，靠这次兜底）
+    const flushOnHide = () => {
+        if (!CloudAPI.connected) return;
+        if (_syncTimer) { clearTimeout(_syncTimer); _syncTimer = null; }
+        // 尽力而为：发起一次推送，不等待结果（移动端页面关闭时常无法拿到回包）
+        CloudAPI.syncProfile(buildProfile()).catch(() => {});
+    };
+    window.addEventListener('pagehide', flushOnHide);
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') flushOnHide();
+    });
 }
 
 // DOM 就绪后初始化
