@@ -1154,6 +1154,9 @@ body::before {
 .an-stroke-seg::-webkit-scrollbar{display:none;}
 .an-stroke-seg button{flex:0 0 auto;border:1.5px solid #d7deec;background:#fff;color:#475569;padding:8px 14px;border-radius:999px;font-size:13px;font-weight:800;cursor:pointer;white-space:nowrap;transition:all .15s;}
 .an-stroke-seg button.active{background:linear-gradient(135deg,var(--swim),var(--swim2));color:#fff;border-color:transparent;box-shadow:0 4px 12px rgba(47,123,255,.28);}
+.an-dist-seg{display:flex;gap:6px;flex-wrap:wrap;padding:6px 2px 2px;}
+.an-dist-seg button{flex:0 0 auto;border:1.5px solid #e0e6f2;background:#f6f8fc;color:#64748b;padding:5px 12px;border-radius:999px;font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap;transition:all .15s;}
+.an-dist-seg button.active{background:linear-gradient(135deg,#1f7a5a,#34c79a);color:#fff;border-color:transparent;box-shadow:0 3px 9px rgba(31,122,90,.26);}
 .chart-card{margin:8px 0 0;background:linear-gradient(160deg,#1a1f3a,#26224a);border-radius:20px;padding:18px;box-shadow:0 14px 34px rgba(20,16,50,.28);position:relative;overflow:hidden;}
 .chart-card .ct{color:#cdd3f0;font-size:13px;font-weight:700;}
 .chart-card .cv{color:#fff;font-size:30px;font-weight:900;margin-top:2px;}
