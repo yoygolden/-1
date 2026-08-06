@@ -757,7 +757,8 @@ const PageRecord = {
         this.ropeMode = m;
         document.querySelectorAll('#rope-seg button').forEach(b => b.classList.toggle('active', b.dataset.rm === m));
         document.getElementById('ropeCountTarget').style.display = (m === 'count') ? '' : 'none';
-        document.getElementById('ropeCountBtn').style.display = (m === 'count') ? '' : 'none';
+        // 手动 +1 按钮在计时过程中统一作为「自动计数不可用时的兜底」，不再按模式隐藏
+        if (!this.ropeRunning) document.getElementById('ropeCountBtn').style.display = 'none';
     },
     resetRopeUI() {
         document.getElementById('ropeStartBtn').textContent = '开始跳绳（开启摄像头）';
@@ -768,16 +769,21 @@ const PageRecord = {
         document.getElementById('ropeStatus').style.display = 'none';
         document.getElementById('ropePh').style.display = '';
         document.getElementById('ropeCount').classList.remove('show');
+        document.getElementById('ropeCountBtn').style.display = 'none';
+        this.exitRopeFullscreen();
     },
     resetRope(silent) { this.stopRopeStream(); this.ropeRunning = false; this.ropeDone = false; this.ropeCount = 0; if (!silent) this.resetRopeUI(); },
     stopRopeStream() { if (this.ropeStream) { this.ropeStream.getTracks().forEach(t => t.stop()); this.ropeStream = null; } },
     startRope() {
         if (this.ropeMode === 'count') this.ropeLimit = parseInt(document.getElementById('ropeTargetInput').value) || 100;
         else this.ropeLimit = parseInt(this.ropeMode) * 60;
+        // 点开始后请求全屏（用户手势内触发，浏览器允许授权）；失败则忽略，不影响计时
+        this.requestRopeFullscreen();
         const ph = document.getElementById('ropePh'), status = document.getElementById('ropeStatus');
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
             navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 720 }, height: { ideal: 1280 } }, audio: false }).then(stream => {
                 this.ropeStream = stream; const v = document.getElementById('ropeVideo'); v.srcObject = stream; ph.style.display = 'none'; status.style.display = 'block';
+                RopePose.init(v, () => this.onRopeAutoCount()); // 初始化姿态检测用于「脚落地自动计数」
             }).catch(() => { ph.innerHTML = '📷 摄像头不可用<br>仍可计时（无画面）'; });
         } else { ph.innerHTML = '📷 摄像头不可用<br>仍可计时（无画面）'; }
         const btn = document.getElementById('ropeStartBtn'); btn.disabled = true; btn.textContent = '准备中…';
@@ -791,16 +797,49 @@ const PageRecord = {
     beginRopeTiming() {
         this.ropeRunning = true; this.ropeDone = false; this.ropeCount = 0; this.ropeStartTs = Date.now();
         document.getElementById('ropeTimerSub').textContent = (this.ropeMode === 'count') ? ('目标 ' + this.ropeLimit + ' 个') : ('目标 ' + fmt(this.ropeLimit));
+        // 显示手动兜底按钮（自动计数不可用时点击 +1）
+        const mbtn = document.getElementById('ropeCountBtn'); mbtn.style.display = ''; mbtn.textContent = '👆 手动 +1（自动计数异常时用）';
+        // 启动姿态检测自动计数（MediaPipe 可用时）
+        RopePose.start();
         this.ropeTimerID = setInterval(() => {
             const el = (Date.now() - this.ropeStartTs) / 1000;
-            if (this.ropeMode === 'count') { document.getElementById('ropeTimer').textContent = this.ropeCount + ''; if (this.ropeCount >= this.ropeLimit) this.finishRope(); }
-            else { document.getElementById('ropeTimer').textContent = fmt(el); if (el >= this.ropeLimit) this.finishRope(); }
+            if (this.ropeMode === 'count') {
+                document.getElementById('ropeTimer').textContent = this.ropeCount + '';
+                if (this.ropeCount >= this.ropeLimit) this.finishRope();
+            } else {
+                document.getElementById('ropeTimer').textContent = fmt(el);
+                // 计时模式也展示实时自动计数
+                document.getElementById('ropeTimerSub').textContent = '目标 ' + fmt(this.ropeLimit) + ' · 已跳 ' + this.ropeCount + ' 个';
+                if (el >= this.ropeLimit) this.finishRope();
+            }
         }, 200);
     },
-    ropeTap() { if (this.ropeRunning && this.ropeMode === 'count') { this.ropeCount++; document.getElementById('ropeTimer').textContent = this.ropeCount + ''; } },
+    ropeTap() {
+        if (!this.ropeRunning) return;
+        this.ropeCount++;
+        if (this.ropeMode === 'count') document.getElementById('ropeTimer').textContent = this.ropeCount + '';
+        else document.getElementById('ropeTimerSub').textContent = '目标 ' + fmt(this.ropeLimit) + ' · 已跳 ' + this.ropeCount + ' 个';
+    },
+    // MediaPipe 自动识别到「脚落地」时回调
+    onRopeAutoCount() {
+        if (!this.ropeRunning) return;
+        this.ropeCount++;
+        if (this.ropeMode === 'count') document.getElementById('ropeTimer').textContent = this.ropeCount + '';
+        else document.getElementById('ropeTimerSub').textContent = '目标 ' + fmt(this.ropeLimit) + ' · 已跳 ' + this.ropeCount + ' 个';
+    },
+    requestRopeFullscreen() {
+        const el = document.getElementById('ropeModule');
+        const fn = el && (el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen);
+        if (fn) { try { (el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen).call(el); } catch (e) {} }
+    },
+    exitRopeFullscreen() {
+        const fn = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
+        if (fn && (document.fullscreenElement || document.webkitFullscreenElement)) { try { fn.call(document); } catch (e) {} }
+    },
     finishRope() {
         if (!this.ropeRunning && this.ropeDone) return;
         this.ropeRunning = false; this.ropeDone = true; clearInterval(this.ropeTimerID);
+        RopePose.stop(); this.exitRopeFullscreen();
         document.getElementById('ropeStatus').style.display = 'none'; this.stopRopeStream();
         const res = (this.ropeMode === 'count') ? (this.ropeCount + ' 个') : (fmt((Date.now() - this.ropeStartTs) / 1000));
         document.getElementById('ropeTimerSub').textContent = '完成！本次 ' + res;
@@ -848,6 +887,58 @@ function haversine(a, b) {
 }
 function fmt(s) { const m = Math.floor(s / 60), ss = Math.floor(s % 60); return (m < 10 ? '0' : '') + m + ':' + (ss < 10 ? '0' : '') + ss; }
 
+/* ==================== 跳绳：脚落地自动计数（MediaPipe Pose） ==================== */
+/* 原理：取双脚踝 landmarks 的竖直坐标（归一化 0=顶部 1=底部），做平滑后检测
+   一次「起跳→落地」周期：脚离地上升(vel<0) → 顶点 → 下落(vel>0) → 触地(vel 由正转负)
+   在 vel 由正转负的瞬间计 1 次（带 300ms 不应期，避免抖动误判）。
+   MediaPipe 脚本由 index.html 以 defer 加载，CDN 不可达时 Pose 为 undefined，自动回退手动计数。 */
+const RopePose = {
+    pose: null, video: null, running: false, raf: null, ready: false,
+    prevY: null, prevVel: 0, airborne: false, lastCountTs: 0, ema: null, onCount: null,
+    init(video, onCount) {
+        this.video = video; this.onCount = onCount;
+        if (typeof Pose === 'undefined') { console.warn('[RopePose] MediaPipe Pose 未加载，自动计数不可用，回退手动'); return; }
+        try {
+            this.pose = new Pose({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/${f}` });
+            this.pose.setOptions({ modelComplexity: 0, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+            this.pose.onResults((res) => this.onResults(res));
+            this.ready = true;
+        } catch (e) { console.warn('[RopePose] 初始化失败，回退手动', e); }
+    },
+    start() {
+        if (!this.ready) return;
+        this.running = true; this.prevY = null; this.prevVel = 0; this.airborne = false; this.lastCountTs = 0; this.ema = null;
+        this.pump();
+    },
+    pump() {
+        if (!this.running) return;
+        const v = this.video;
+        if (v && v.readyState >= 2) { this.pose.send({ image: v }).catch(() => {}); }
+        this.raf = requestAnimationFrame(() => this.pump());
+    },
+    onResults(res) {
+        if (!this.running) return;
+        const lm = res.poseLandmarks;
+        if (!lm || lm.length < 29) return;
+        const lA = lm[27], rA = lm[28]; // 左/右踝
+        if (!lA || !rA || (lA.visibility != null && (lA.visibility < 0.3 || rA.visibility < 0.3))) return;
+        const y = (lA.y + rA.y) / 2; // 0 顶部 .. 1 底部
+        if (this.ema == null) this.ema = y; else this.ema = this.ema * 0.8 + y * 0.2; // 平滑
+        if (this.prevY != null) {
+            const vel = this.ema - this.prevY; // >0 脚在下落
+            if (vel < -0.002) this.airborne = true; // 脚在上升 => 离地过
+            // 落地瞬间：此前在下落(vel>0) 且 此刻转为上升(vel<=0)，并确曾离地
+            if (this.airborne && this.prevVel > 0.002 && vel <= 0) {
+                const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+                if (now - this.lastCountTs > 300) { this.lastCountTs = now; this.airborne = false; if (this.onCount) this.onCount(); }
+            }
+            this.prevVel = vel;
+        }
+        this.prevY = this.ema;
+    },
+    stop() { this.running = false; if (this.raf) cancelAnimationFrame(this.raf); this.raf = null; }
+};
+
 /* ==================== 页面：历史记录 ==================== */
 const PageHistory = {
     render() {
@@ -893,6 +984,7 @@ const PageHistory = {
 const PageAnalysis = {
     currentProj: 'swim',
     currentPeriod: 'week',
+    currentSwimStroke: 'all',
     runChart: null, ropeChart: null,
     setProj(p) {
         this.currentProj = p;
@@ -905,6 +997,11 @@ const PageAnalysis = {
         this.currentPeriod = p;
         document.querySelectorAll('#an-period-toggle button').forEach(b => b.classList.toggle('active', b.dataset.period === p));
         this.render();
+    },
+    setSwimStroke(s) {
+        this.currentSwimStroke = s;
+        document.querySelectorAll('#an-swim-stroke-seg button').forEach(b => b.classList.toggle('active', b.dataset.sw === s));
+        this.renderSwim();
     },
     filterByPeriod(records) {
         const now = new Date();
@@ -922,60 +1019,83 @@ const PageAnalysis = {
         else this.renderRope();
     },
     renderSwim() {
-        const records = this.filterByPeriod(Store.getRecords().filter(r => r.category === 'swim' && r.distance > 0 && r.timeMs > 0 && r.stroke));
-        const strokes = ['自由泳', '蛙泳', '仰泳', '蝶泳', '混合泳'];
+        const all = Store.getRecords().filter(r => r.category === 'swim' && r.distance > 0 && r.timeMs > 0 && r.stroke);
+        const records = this.filterByPeriod(all);
+        const strokesAll = ['自由泳', '蛙泳', '仰泳', '蝶泳', '混合泳'];
         const colors = { '自由泳': '#7fe0ff', '蛙泳': '#ffd166', '仰泳': '#c39bff', '蝶泳': '#ff8fab', '混合泳': '#ffa94d' };
+        // 当前选中的泳姿（全部 or 单泳姿）
+        const sel = this.currentSwimStroke;
+        const activeStrokes = sel === 'all' ? strokesAll : [sel];
         const series = {}; const counts = {};
-        strokes.forEach(s => {
-            const rs = records.filter(r => r.stroke === s).sort((a, b) => a.date === b.date ? (a.createdAt || 0) - (b.createdAt || 0) : a.date.localeCompare(b.date));
-            series[s] = rs.map(r => ({ date: r.date, pace: r.timeMs / r.distance * 100 }));
+        activeStrokes.forEach(s => {
+            const rs = all.filter(r => r.stroke === s).sort((a, b) => a.date === b.date ? (a.createdAt || 0) - (b.createdAt || 0) : a.date.localeCompare(b.date));
+            series[s] = rs.map(r => ({ t: new Date(r.date + 'T00:00:00').getTime(), pace: r.timeMs / r.distance * 100 }));
             counts[s] = rs.length;
         });
-        const allPaces = []; strokes.forEach(s => series[s].forEach(p => allPaces.push(p.pace)));
-        if (allPaces.length === 0) { document.getElementById('a-swim-summary').textContent = this.periodLabel() + ' · 暂无游泳记录'; document.getElementById('a-swim-line').innerHTML = '<div style="color:#8b93c7;font-size:12px;padding:20px 0;text-align:center">记录游泳成绩后，这里会展示各泳姿进步折线图</div>'; document.getElementById('a-swim-legend').innerHTML = ''; document.getElementById('a-swim-rates').innerHTML = ''; document.getElementById('a-swim-stats').innerHTML = ''; document.getElementById('a-swim-dist').innerHTML = ''; return; }
-        let yMin = Math.min(...allPaces), yMax = Math.max(...allPaces); const pad = (yMax - yMin) * 0.15 || 10; yMin = Math.max(0, yMin - pad); yMax = yMax + pad;
-        const L = 28, R = 312, T = 10, B = 148, maxN = Math.max(...strokes.map(s => series[s].length));
-        const xAt = i => L + (i / Math.max(1, maxN - 1)) * (R - L);
+        // 进退步率基于「周期内的记录」计算
+        const periodSeries = {};
+        activeStrokes.forEach(s => {
+            periodSeries[s] = records.filter(r => r.stroke === s).sort((a, b) => a.date === b.date ? (a.createdAt || 0) - (b.createdAt || 0) : a.date.localeCompare(b.date)).map(r => r.timeMs / r.distance * 100);
+        });
+        const allPaces = []; activeStrokes.forEach(s => series[s].forEach(p => allPaces.push(p.pace)));
+        if (allPaces.length === 0) { document.getElementById('a-swim-summary').textContent = this.periodLabel() + ' · 暂无游泳记录'; document.getElementById('a-swim-line').innerHTML = '<div style="color:#8b93c7;font-size:12px;padding:20px 0;text-align:center">记录游泳成绩后，这里会按时间展示各泳姿进步折线图</div>'; document.getElementById('a-swim-legend').innerHTML = ''; document.getElementById('a-swim-rates').innerHTML = ''; document.getElementById('a-swim-stats').innerHTML = ''; document.getElementById('a-swim-dist').innerHTML = ''; return; }
+        // y 轴 = 每100m配速(秒)
+        let yMin = Math.min(...allPaces), yMax = Math.max(...allPaces); const ypad = (yMax - yMin) * 0.15 || 10; yMin = Math.max(0, yMin - ypad); yMax = yMax + ypad;
+        // x 轴 = 时间（按最早/最晚日期横向铺开）
+        let tMin = Infinity, tMax = -Infinity;
+        activeStrokes.forEach(s => series[s].forEach(p => { if (p.t < tMin) tMin = p.t; if (p.t > tMax) tMax = p.t; }));
+        if (tMax - tMin < 86400000) { const mid = (tMin + tMax) / 2; tMin = mid - 43200000; tMax = mid + 43200000; }
+        const L = 30, R = 312, T = 10, B = 150, W = 320, H = 162;
+        const xAt = t => L + (tMax === tMin ? 0.5 : (t - tMin) / (tMax - tMin)) * (R - L);
         const yAt = v => T + (v - yMin) / (yMax - yMin) * (B - T);
-        let svg = '<svg width="100%" height="160" viewBox="0 0 320 162" preserveAspectRatio="none">';
+        let svg = `<svg width="100%" height="160" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">`;
+        // 横向网格 + 日期刻度
+        const ticks = 3;
+        for (let i = 0; i <= ticks; i++) {
+            const t = tMin + (tMax - tMin) * i / ticks;
+            const x = xAt(t);
+            const dt = new Date(t);
+            const label = (dt.getMonth() + 1) + '/' + dt.getDate();
+            svg += `<line x1="${x.toFixed(1)}" y1="${T}" x2="${x.toFixed(1)}" y2="${B}" stroke="rgba(255,255,255,.06)"/><text x="${x.toFixed(1)}" y="${B + 14}" fill="rgba(205,211,240,.55)" font-size="9" text-anchor="${i === 0 ? 'start' : i === ticks ? 'end' : 'middle'}">${label}</text>`;
+        }
         [Math.ceil(yMin / 20) * 20, (yMin + yMax) / 2, Math.floor(yMax / 20) * 20].forEach(v => { const y = yAt(v); svg += `<line x1="${L}" y1="${y.toFixed(1)}" x2="${R}" y2="${y.toFixed(1)}" stroke="rgba(255,255,255,.08)"/><text x="${L - 4}" y="${(y + 3).toFixed(1)}" fill="rgba(205,211,240,.6)" font-size="9" text-anchor="end">${Math.round(v)}</text>`; });
-        strokes.forEach(s => {
+        activeStrokes.forEach(s => {
             const d = series[s]; if (!d.length) return;
-            const pts = d.map((p, i) => `${xAt(i).toFixed(1)},${yAt(p.pace).toFixed(1)}`).join(' ');
+            const pts = d.map(p => `${xAt(p.t).toFixed(1)},${yAt(p.pace).toFixed(1)}`).join(' ');
             svg += `<polyline points="${pts}" fill="none" stroke="${colors[s]}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" opacity=".95"/>`;
-            const lx = xAt(d.length - 1), ly = yAt(d[d.length - 1].pace);
-            svg += `<circle cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="3.4" fill="${colors[s]}" stroke="#15294f" stroke-width="1.5"/>`;
+            d.forEach(p => { svg += `<circle cx="${xAt(p.t).toFixed(1)}" cy="${yAt(p.pace).toFixed(1)}" r="2.6" fill="${colors[s]}"/>`; });
         });
         svg += '</svg>';
         document.getElementById('a-swim-line').innerHTML = svg;
-        document.getElementById('a-swim-legend').innerHTML = strokes.filter(s => series[s].length).map(s => `<span class="lg"><i style="background:${colors[s]}"></i>${s}</span>`).join('');
-        // 进退步率
-        const halfMax = Math.max(4, Math.floor(maxN / 2));
+        document.getElementById('a-swim-legend').innerHTML = activeStrokes.filter(s => series[s].length).map(s => `<span class="lg"><i style="background:${colors[s]}"></i>${s}</span>`).join('');
+        // 进退步率（基于周期内记录的前半段 vs 后半段）
         let up = 0, down = 0, rows = '';
-        strokes.forEach(s => {
-            const d = series[s]; if (d.length < 2) return;
+        activeStrokes.forEach(s => {
+            const d = periodSeries[s]; if (d.length < 2) return;
             const half = Math.floor(d.length / 2);
-            const ea = d.slice(0, half).reduce((a, b) => a + b.pace, 0) / half;
-            const la = d.slice(half).reduce((a, b) => a + b.pace, 0) / (d.length - half);
+            const ea = d.slice(0, half).reduce((a, b) => a + b, 0) / half;
+            const la = d.slice(half).reduce((a, b) => a + b, 0) / (d.length - half);
             const rate = (ea - la) / ea * 100; const improving = rate >= 0;
             if (improving) up++; else down++;
             rows += `<div class="rate-row"><span class="rdot" style="background:${colors[s]}"></span><div class="rinfo"><div class="rn">${s}</div><div class="rs">每100m ${ea.toFixed(1)}→${la.toFixed(1)}s</div></div><div class="rv ${improving ? 'up' : 'down'}">${improving ? '▲ 进步' : '▼ 退步'} ${Math.abs(rate).toFixed(1)}%</div></div>`;
         });
         document.getElementById('a-swim-rates').innerHTML = rows;
-        document.getElementById('a-swim-summary').textContent = `${this.periodLabel()} · ${maxN} 次训练 · ${up} 项进步 ${down} 项退步`;
+        const totalTrain = activeStrokes.reduce((s, k) => s + series[k].length, 0);
+        document.getElementById('a-swim-summary').textContent = `${sel === 'all' ? '全部泳姿' : sel} · ${this.periodLabel()} · ${totalTrain} 次训练 · ${up} 项进步 ${down} 项退步`;
         // 统计
-        const totalCount = records.length;
-        const totalDist = records.reduce((s, r) => s + r.distance, 0);
-        const totalTime = records.reduce((s, r) => s + r.timeMs, 0);
-        let best = null; records.forEach(r => { if (!best || r.timeMs < best) best = r.timeMs; });
+        const recAll = all.filter(r => sel === 'all' || r.stroke === sel);
+        const totalCount = recAll.length;
+        const totalDist = recAll.reduce((s, r) => s + r.distance, 0);
+        const totalTime = recAll.reduce((s, r) => s + r.timeMs, 0);
+        let best = null; recAll.forEach(r => { if (!best || r.timeMs < best) best = r.timeMs; });
         document.getElementById('a-swim-stats').innerHTML = `
             <div class="an-stat"><div class="k">总次数</div><div class="v">${totalCount}<span>次</span></div></div>
             <div class="an-stat"><div class="k">总距离</div><div class="v">${Utils.mToKm(totalDist)}<span>km</span></div></div>
             <div class="an-stat"><div class="k">总时长</div><div class="v">${Utils.msToHours(totalTime)}<span>h</span></div></div>
             <div class="an-stat"><div class="k">最佳单程</div><div class="v">${best != null ? Utils.msToTime(best).main : '—'}</div></div>`;
         // 泳姿分布
-        const maxC = Math.max(1, ...strokes.map(s => counts[s]));
-        document.getElementById('a-swim-dist').innerHTML = strokes.map(s => `<div class="bar"><div class="bn">${s}</div><div class="bt"><div class="bf" style="width:${(counts[s] / maxC * 100).toFixed(0)}%;background:linear-gradient(90deg,${colors[s]},${colors[s]})"></div></div><div class="bv">${counts[s]} 次</div></div>`).join('');
+        const maxC = Math.max(1, ...strokesAll.map(s => counts[s] || 0));
+        document.getElementById('a-swim-dist').innerHTML = strokesAll.map(s => `<div class="bar"><div class="bn">${s}</div><div class="bt"><div class="bf" style="width:${((counts[s] || 0) / maxC * 100).toFixed(0)}%;background:linear-gradient(90deg,${colors[s]},${colors[s]})"></div></div><div class="bv">${counts[s] || 0} 次</div></div>`).join('');
     },
     renderRun() {
         const records = this.filterByPeriod(Store.getRecords().filter(r => r.category === 'run' && r.distance > 0)).sort((a, b) => a.date === b.date ? (a.createdAt || 0) - (b.createdAt || 0) : a.date.localeCompare(b.date));
@@ -1291,7 +1411,6 @@ function bindEvents() {
     document.querySelectorAll('#cat-seg button').forEach(btn => btn.addEventListener('click', () => PageRecord.setCat(btn.dataset.cat)));
     document.getElementById('stroke-select').addEventListener('change', (e) => { PageRecord.selectedStroke = e.target.value; });
     document.getElementById('record-back-btn').addEventListener('click', () => Router.navigate(Router.prevView || 'home'));
-    document.getElementById('record-cancel-btn').addEventListener('click', () => Router.navigate(Router.prevView || 'home'));
     document.getElementById('recordSave').addEventListener('click', () => PageRecord.save());
     document.getElementById('runBtn').addEventListener('click', () => PageRecord.toggleRun());
     document.querySelectorAll('#rope-seg button').forEach(btn => btn.addEventListener('click', () => { PageRecord.setRopeMode(btn.dataset.rm); }));
@@ -1305,6 +1424,7 @@ function bindEvents() {
     /* 分析页 */
     document.querySelectorAll('#proj-seg button').forEach(btn => btn.addEventListener('click', () => PageAnalysis.setProj(btn.dataset.proj)));
     document.querySelectorAll('#an-period-toggle button').forEach(btn => btn.addEventListener('click', () => PageAnalysis.setPeriod(btn.dataset.period)));
+    document.querySelectorAll('#an-swim-stroke-seg button').forEach(btn => btn.addEventListener('click', () => PageAnalysis.setSwimStroke(btn.dataset.sw)));
 
     /* 个人中心 */
     document.getElementById('edit-nickname-btn').addEventListener('click', () => { const u = Store.getCurrentUser(); document.getElementById('nickname-input').value = u.nickname; document.getElementById('nickname-modal').classList.add('active'); });
