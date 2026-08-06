@@ -985,6 +985,7 @@ const PageAnalysis = {
     currentProj: 'swim',
     currentPeriod: 'week',
     currentSwimStroke: 'all',
+    currentSwimDist: 'all',
     runChart: null, ropeChart: null,
     setProj(p) {
         this.currentProj = p;
@@ -1001,7 +1002,30 @@ const PageAnalysis = {
     setSwimStroke(s) {
         this.currentSwimStroke = s;
         document.querySelectorAll('#an-swim-stroke-seg button').forEach(b => b.classList.toggle('active', b.dataset.sw === s));
+        // 切换泳姿后，可用距离随该泳姿的记录动态变化；保留当前距离选择（若仍有效），否则回退到「全部距离」
+        this.populateSwimDistSeg();
         this.renderSwim();
+    },
+    setSwimDist(d) {
+        this.currentSwimDist = d;
+        document.querySelectorAll('#an-swim-dist-seg button').forEach(b => b.classList.toggle('active', String(b.dataset.dist) === String(d)));
+        this.renderSwim();
+    },
+    // 根据当前选中泳姿的记录，动态生成「距离」选项（每个泳姿只展示它实际游过的距离）
+    populateSwimDistSeg() {
+        const all = this._swimBase();
+        const stroke = this.currentSwimStroke;
+        const pool = stroke === 'all' ? all : all.filter(r => r.stroke === stroke);
+        const dists = Array.from(new Set(pool.map(r => Math.round(r.distance)))).sort((a, b) => a - b);
+        const seg = document.getElementById('an-swim-dist-seg');
+        if (!seg) return;
+        const cur = this.currentSwimDist;
+        const active = (cur === 'all' || dists.includes(Number(cur))) ? cur : 'all';
+        this.currentSwimDist = active;
+        let html = `<button class="${active === 'all' ? 'active' : ''}" data-dist="all">全部距离</button>`;
+        html += dists.map(d => `<button class="${String(d) === String(active) ? 'active' : ''}" data-dist="${d}" title="${d} 米">${d}m</button>`).join('');
+        seg.innerHTML = html;
+        seg.querySelectorAll('button').forEach(btn => btn.addEventListener('click', () => this.setSwimDist(btn.dataset.dist)));
     },
     filterByPeriod(records) {
         const now = new Date();
@@ -1018,9 +1042,16 @@ const PageAnalysis = {
         else if (this.currentProj === 'run') this.renderRun();
         else this.renderRope();
     },
+    _swimBase() {
+        return Store.getRecords().filter(r => r.category === 'swim' && r.distance > 0 && r.timeMs > 0 && r.stroke);
+    },
     renderSwim() {
-        const all = Store.getRecords().filter(r => r.category === 'swim' && r.distance > 0 && r.timeMs > 0 && r.stroke);
-        const records = this.filterByPeriod(all);
+        this.populateSwimDistSeg();
+        const all = this._swimBase();
+        // 距离维度：currentSwimDist==='all' 表示不限距离，否则只取等于该距离的记录
+        const distFilter = r => this.currentSwimDist === 'all' ? true : Math.round(r.distance) === Number(this.currentSwimDist);
+        const allF = all.filter(distFilter);
+        const records = this.filterByPeriod(allF);
         const strokesAll = ['自由泳', '蛙泳', '仰泳', '蝶泳', '混合泳'];
         const colors = { '自由泳': '#7fe0ff', '蛙泳': '#ffd166', '仰泳': '#c39bff', '蝶泳': '#ff8fab', '混合泳': '#ffa94d' };
         // 当前选中的泳姿（全部 or 单泳姿）
@@ -1028,7 +1059,7 @@ const PageAnalysis = {
         const activeStrokes = sel === 'all' ? strokesAll : [sel];
         const series = {}; const counts = {};
         activeStrokes.forEach(s => {
-            const rs = all.filter(r => r.stroke === s).sort((a, b) => a.date === b.date ? (a.createdAt || 0) - (b.createdAt || 0) : a.date.localeCompare(b.date));
+            const rs = allF.filter(r => r.stroke === s).sort((a, b) => a.date === b.date ? (a.createdAt || 0) - (b.createdAt || 0) : a.date.localeCompare(b.date));
             series[s] = rs.map(r => ({ t: new Date(r.date + 'T00:00:00').getTime(), pace: r.timeMs / r.distance * 100 }));
             counts[s] = rs.length;
         });
@@ -1081,9 +1112,10 @@ const PageAnalysis = {
         });
         document.getElementById('a-swim-rates').innerHTML = rows;
         const totalTrain = activeStrokes.reduce((s, k) => s + series[k].length, 0);
-        document.getElementById('a-swim-summary').textContent = `${sel === 'all' ? '全部泳姿' : sel} · ${this.periodLabel()} · ${totalTrain} 次训练 · ${up} 项进步 ${down} 项退步`;
+        const distLabel = this.currentSwimDist === 'all' ? '全部距离' : (this.currentSwimDist + 'm');
+        document.getElementById('a-swim-summary').textContent = `${sel === 'all' ? '全部泳姿' : sel} · ${distLabel} · ${this.periodLabel()} · ${totalTrain} 次训练 · ${up} 项进步 ${down} 项退步`;
         // 统计
-        const recAll = all.filter(r => sel === 'all' || r.stroke === sel);
+        const recAll = allF.filter(r => sel === 'all' || r.stroke === sel);
         const totalCount = recAll.length;
         const totalDist = recAll.reduce((s, r) => s + r.distance, 0);
         const totalTime = recAll.reduce((s, r) => s + r.timeMs, 0);
