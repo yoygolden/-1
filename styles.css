@@ -1122,6 +1122,18 @@ body::before {
 .rope-timer .t{font-size:42px;font-weight:900;font-variant-numeric:tabular-nums;letter-spacing:1px;}
 .rope-timer .ts{font-size:12px;color:var(--ink-soft);margin-top:4px;font-weight:700;}
 
+/* 跳绳全屏：点开始记录后整个模块进入全屏，视频铺满、计数与按钮常驻可见 */
+#ropeModule:fullscreen{max-width:none;padding:0;background:#0a0d14;overflow:auto;}
+#ropeModule:-webkit-full-screen{max-width:none;padding:0;background:#0a0d14;overflow:auto;}
+#ropeModule:fullscreen .rope-cam{margin:0;border-radius:0;height:100vh;border:none;}
+#ropeModule:-webkit-full-screen .rope-cam{margin:0;border-radius:0;height:100vh;border:none;}
+#ropeModule:fullscreen .rope-cam video{height:100vh;object-fit:cover;}
+#ropeModule:-webkit-full-screen .rope-cam video{height:100vh;object-fit:cover;}
+#ropeModule:fullscreen .count-overlay{position:fixed;}
+#ropeModule:fullscreen .rope-timer .t{font-size:64px;}
+#ropeModule:fullscreen #ropeCountBtn{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:30;width:auto;padding:18px 40px;font-size:18px;box-shadow:0 10px 30px rgba(0,0,0,.5);}
+#ropeModule:fullscreen #ropeStartBtn{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);z-index:30;width:auto;padding:16px 36px;font-size:16px;}
+
 /* 保存按钮（记录页通用） */
 .save{margin:22px 0 0;border:none;border-radius:16px;padding:16px;width:100%;font-size:16px;font-weight:900;color:#fff;cursor:pointer;background:linear-gradient(135deg,var(--swim),var(--swim2));box-shadow:0 12px 26px rgba(47,123,255,.32);font-family:var(--font-fun);}
 
@@ -1136,6 +1148,12 @@ body::before {
 .an-period-toggle button.active{background:#fff;color:#0f172a;box-shadow:0 2px 8px rgba(15,23,42,.06);}
 .an-content{display:none;}
 .an-content.show{display:block;}
+/* 游泳分析：泳姿选项（横向滚动，可点选单泳姿或「全部」） */
+.an-stroke-bar{margin:8px 0 4px;}
+.an-stroke-seg{display:flex;gap:7px;overflow-x:auto;padding:4px 2px;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
+.an-stroke-seg::-webkit-scrollbar{display:none;}
+.an-stroke-seg button{flex:0 0 auto;border:1.5px solid #d7deec;background:#fff;color:#475569;padding:8px 14px;border-radius:999px;font-size:13px;font-weight:800;cursor:pointer;white-space:nowrap;transition:all .15s;}
+.an-stroke-seg button.active{background:linear-gradient(135deg,var(--swim),var(--swim2));color:#fff;border-color:transparent;box-shadow:0 4px 12px rgba(47,123,255,.28);}
 .chart-card{margin:8px 0 0;background:linear-gradient(160deg,#1a1f3a,#26224a);border-radius:20px;padding:18px;box-shadow:0 14px 34px rgba(20,16,50,.28);position:relative;overflow:hidden;}
 .chart-card .ct{color:#cdd3f0;font-size:13px;font-weight:700;}
 .chart-card .cv{color:#fff;font-size:30px;font-weight:900;margin-top:2px;}
