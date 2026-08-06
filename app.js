@@ -776,7 +776,7 @@ const PageRecord = {
         else this.ropeLimit = parseInt(this.ropeMode) * 60;
         const ph = document.getElementById('ropePh'), status = document.getElementById('ropeStatus');
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-            navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false }).then(stream => {
+            navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 720 }, height: { ideal: 1280 } }, audio: false }).then(stream => {
                 this.ropeStream = stream; const v = document.getElementById('ropeVideo'); v.srcObject = stream; ph.style.display = 'none'; status.style.display = 'block';
             }).catch(() => { ph.innerHTML = '📷 摄像头不可用<br>仍可计时（无画面）'; });
         } else { ph.innerHTML = '📷 摄像头不可用<br>仍可计时（无画面）'; }
@@ -892,6 +892,7 @@ const PageHistory = {
 /* ==================== 页面：成绩分析（按项目分开展示） ==================== */
 const PageAnalysis = {
     currentProj: 'swim',
+    currentPeriod: 'week',
     runChart: null, ropeChart: null,
     setProj(p) {
         this.currentProj = p;
@@ -900,13 +901,28 @@ const PageAnalysis = {
         document.getElementById('an-' + p).classList.add('show');
         this.render();
     },
+    setPeriod(p) {
+        this.currentPeriod = p;
+        document.querySelectorAll('#an-period-toggle button').forEach(b => b.classList.toggle('active', b.dataset.period === p));
+        this.render();
+    },
+    filterByPeriod(records) {
+        const now = new Date();
+        let from = new Date(0);
+        if (this.currentPeriod === 'week') from = new Date(now.getTime() - 7 * 86400000);
+        else if (this.currentPeriod === 'month') from = new Date(now.getTime() - 30 * 86400000);
+        else if (this.currentPeriod === 'year') from = new Date(now.getTime() - 365 * 86400000);
+        const fromStr = from.toISOString().slice(0, 10);
+        return records.filter(r => r.date >= fromStr);
+    },
+    periodLabel() { return this.currentPeriod === 'week' ? '近 7 天' : this.currentPeriod === 'month' ? '近 30 天' : '近 1 年'; },
     render() {
         if (this.currentProj === 'swim') this.renderSwim();
         else if (this.currentProj === 'run') this.renderRun();
         else this.renderRope();
     },
     renderSwim() {
-        const records = Store.getRecords().filter(r => r.category === 'swim' && r.distance > 0 && r.timeMs > 0 && r.stroke);
+        const records = this.filterByPeriod(Store.getRecords().filter(r => r.category === 'swim' && r.distance > 0 && r.timeMs > 0 && r.stroke));
         const strokes = ['自由泳', '蛙泳', '仰泳', '蝶泳', '混合泳'];
         const colors = { '自由泳': '#7fe0ff', '蛙泳': '#ffd166', '仰泳': '#c39bff', '蝶泳': '#ff8fab', '混合泳': '#ffa94d' };
         const series = {}; const counts = {};
@@ -916,7 +932,7 @@ const PageAnalysis = {
             counts[s] = rs.length;
         });
         const allPaces = []; strokes.forEach(s => series[s].forEach(p => allPaces.push(p.pace)));
-        if (allPaces.length === 0) { document.getElementById('a-swim-summary').textContent = '暂无游泳记录'; document.getElementById('a-swim-line').innerHTML = '<div style="color:#8b93c7;font-size:12px;padding:20px 0;text-align:center">记录游泳成绩后，这里会展示各泳姿进步折线图</div>'; document.getElementById('a-swim-legend').innerHTML = ''; document.getElementById('a-swim-rates').innerHTML = ''; document.getElementById('a-swim-stats').innerHTML = ''; document.getElementById('a-swim-dist').innerHTML = ''; return; }
+        if (allPaces.length === 0) { document.getElementById('a-swim-summary').textContent = this.periodLabel() + ' · 暂无游泳记录'; document.getElementById('a-swim-line').innerHTML = '<div style="color:#8b93c7;font-size:12px;padding:20px 0;text-align:center">记录游泳成绩后，这里会展示各泳姿进步折线图</div>'; document.getElementById('a-swim-legend').innerHTML = ''; document.getElementById('a-swim-rates').innerHTML = ''; document.getElementById('a-swim-stats').innerHTML = ''; document.getElementById('a-swim-dist').innerHTML = ''; return; }
         let yMin = Math.min(...allPaces), yMax = Math.max(...allPaces); const pad = (yMax - yMin) * 0.15 || 10; yMin = Math.max(0, yMin - pad); yMax = yMax + pad;
         const L = 28, R = 312, T = 10, B = 148, maxN = Math.max(...strokes.map(s => series[s].length));
         const xAt = i => L + (i / Math.max(1, maxN - 1)) * (R - L);
@@ -946,7 +962,7 @@ const PageAnalysis = {
             rows += `<div class="rate-row"><span class="rdot" style="background:${colors[s]}"></span><div class="rinfo"><div class="rn">${s}</div><div class="rs">每100m ${ea.toFixed(1)}→${la.toFixed(1)}s</div></div><div class="rv ${improving ? 'up' : 'down'}">${improving ? '▲ 进步' : '▼ 退步'} ${Math.abs(rate).toFixed(1)}%</div></div>`;
         });
         document.getElementById('a-swim-rates').innerHTML = rows;
-        document.getElementById('a-swim-summary').textContent = `近 ${maxN} 次训练 · ${up} 项进步 ${down} 项退步`;
+        document.getElementById('a-swim-summary').textContent = `${this.periodLabel()} · ${maxN} 次训练 · ${up} 项进步 ${down} 项退步`;
         // 统计
         const totalCount = records.length;
         const totalDist = records.reduce((s, r) => s + r.distance, 0);
@@ -962,11 +978,11 @@ const PageAnalysis = {
         document.getElementById('a-swim-dist').innerHTML = strokes.map(s => `<div class="bar"><div class="bn">${s}</div><div class="bt"><div class="bf" style="width:${(counts[s] / maxC * 100).toFixed(0)}%;background:linear-gradient(90deg,${colors[s]},${colors[s]})"></div></div><div class="bv">${counts[s]} 次</div></div>`).join('');
     },
     renderRun() {
-        const records = Store.getRecords().filter(r => r.category === 'run' && r.distance > 0).sort((a, b) => a.date === b.date ? (a.createdAt || 0) - (b.createdAt || 0) : a.date.localeCompare(b.date));
+        const records = this.filterByPeriod(Store.getRecords().filter(r => r.category === 'run' && r.distance > 0)).sort((a, b) => a.date === b.date ? (a.createdAt || 0) - (b.createdAt || 0) : a.date.localeCompare(b.date));
         const totalDist = records.reduce((s, r) => s + r.distance, 0);
         document.getElementById('a-run-total').textContent = Utils.mToKm(totalDist) + ' km';
-        if (records.length === 0) { document.getElementById('a-run-sub').textContent = '暂无跑步记录'; this._emptyRun(); return; }
-        document.getElementById('a-run-sub').textContent = `共 ${records.length} 次 · 最佳配速 ${this.bestPace(records)}/km`;
+        if (records.length === 0) { document.getElementById('a-run-sub').textContent = this.periodLabel() + ' · 暂无跑步记录'; this._emptyRun(); return; }
+        document.getElementById('a-run-sub').textContent = `${this.periodLabel()} · 共 ${records.length} 次 · 最佳配速 ${this.bestPace(records)}/km`;
         // 折线图（距离趋势）
         const labels = records.map(r => Utils.formatDateShort(r.date));
         const data = records.map(r => r.distance / 1000);
@@ -1016,12 +1032,12 @@ const PageAnalysis = {
         document.getElementById('a-run-route-dist').textContent = '0.00'; document.getElementById('a-run-route-sub').textContent = '暂无路线';
     },
     renderRope() {
-        const records = Store.getRecords().filter(r => r.category === 'rope' && r.count > 0).sort((a, b) => a.date === b.date ? (a.createdAt || 0) - (b.createdAt || 0) : a.date.localeCompare(b.date));
+        const records = this.filterByPeriod(Store.getRecords().filter(r => r.category === 'rope' && r.count > 0)).sort((a, b) => a.date === b.date ? (a.createdAt || 0) - (b.createdAt || 0) : a.date.localeCompare(b.date));
         const totalCount = records.reduce((s, r) => s + (r.count || 0), 0);
         document.getElementById('a-rope-total').textContent = totalCount + ' 次';
-        if (records.length === 0) { document.getElementById('a-rope-sub').textContent = '暂无跳绳记录'; this._emptyRope(); return; }
+        if (records.length === 0) { document.getElementById('a-rope-sub').textContent = this.periodLabel() + ' · 暂无跳绳记录'; this._emptyRope(); return; }
         const best = Math.max(...records.map(r => r.count || 0));
-        document.getElementById('a-rope-sub').textContent = `共 ${records.length} 次 · 最佳 ${best} 次`;
+        document.getElementById('a-rope-sub').textContent = `${this.periodLabel()} · 共 ${records.length} 次 · 最佳 ${best} 次`;
         const labels = records.map(r => Utils.formatDateShort(r.date));
         const data = records.map(r => r.count || 0);
         this._lineChart('a-rope-chart', 'ropeChart', labels, data, '#c084fc', '次');
@@ -1288,6 +1304,7 @@ function bindEvents() {
 
     /* 分析页 */
     document.querySelectorAll('#proj-seg button').forEach(btn => btn.addEventListener('click', () => PageAnalysis.setProj(btn.dataset.proj)));
+    document.querySelectorAll('#an-period-toggle button').forEach(btn => btn.addEventListener('click', () => PageAnalysis.setPeriod(btn.dataset.period)));
 
     /* 个人中心 */
     document.getElementById('edit-nickname-btn').addEventListener('click', () => { const u = Store.getCurrentUser(); document.getElementById('nickname-input').value = u.nickname; document.getElementById('nickname-modal').classList.add('active'); });
