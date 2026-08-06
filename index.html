@@ -18,8 +18,8 @@
     <!-- Chart.js 已本地自托管（vendor/chart.umd.min.js），不再依赖被墙的 CDN -->
     <!-- ZCOOL KuaiLe 卡通字体本地自托管 -->
     <link rel="stylesheet" href="vendor/ZCOOLKuaiLe.css?v=1">
-    <link rel="stylesheet" href="styles.css?v=16">
-    <script src="vendor/chart.umd.min.js?v=16"></script>
+    <link rel="stylesheet" href="styles.css?v=17">
+    <script src="vendor/chart.umd.min.js?v=17"></script>
 </head>
 <body>
     <div id="app">
@@ -333,6 +333,9 @@
                                 <button data-sw="蝶泳">蝶泳</button>
                                 <button data-sw="混合泳">混合泳</button>
                             </div>
+                            <div class="an-dist-seg" id="an-swim-dist-seg" title="按所选泳姿下的实际记录距离动态生成">
+                                <button class="active" data-dist="all">全部距离</button>
+                            </div>
                         </div>
                         <div class="chart-card swim">
                             <div class="ct">进步趋势 · 每100m配速(秒) · 横向为时间</div>
@@ -475,7 +478,7 @@
 
                     <button class="logout-btn" id="logout-btn">退出登录</button>
 
-                    <div class="app-version">SwimTrack v16</div>
+                    <div class="app-version">SwimTrack v17</div>
 
                     <div style="height: 100px;"></div>
                 </div>
@@ -696,6 +699,6 @@
     </div><!-- /app -->
     <!-- MediaPipe Pose（defer：仅在跳绳开始计时时按需用于「脚落地自动计数」，CDN 不可达时自动回退手动计数） -->
     <script defer src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/pose.js" crossorigin="anonymous"></script>
-    <script src="app.js?v=16"></script>
+    <script src="app.js?v=17"></script>
 </body>
 </html>
