@@ -18,8 +18,8 @@
     <!-- Chart.js 已本地自托管（vendor/chart.umd.min.js），不再依赖被墙的 CDN -->
     <!-- ZCOOL KuaiLe 卡通字体本地自托管 -->
     <link rel="stylesheet" href="vendor/ZCOOLKuaiLe.css?v=1">
-    <link rel="stylesheet" href="styles.css?v=14">
-    <script src="vendor/chart.umd.min.js?v=14"></script>
+    <link rel="stylesheet" href="styles.css?v=15">
+    <script src="vendor/chart.umd.min.js?v=15"></script>
 </head>
 <body>
     <div id="app">
@@ -311,6 +311,13 @@
                 </header>
 
                 <div class="page-content">
+                    <div class="an-period-bar">
+                        <div class="an-period-toggle" id="an-period-toggle">
+                            <button class="active" data-period="week">周</button>
+                            <button data-period="month">月</button>
+                            <button data-period="year">年</button>
+                        </div>
+                    </div>
                     <div class="seg" id="proj-seg">
                         <button class="active" data-proj="swim">🏊 游泳</button>
                         <button data-proj="run">🏃 跑步</button>
@@ -679,6 +686,6 @@
         </div>
 
     </div><!-- /app -->
-    <script src="app.js?v=14"></script>
+    <script src="app.js?v=15"></script>
 </body>
 </html>
