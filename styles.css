@@ -1109,7 +1109,7 @@ body::before {
 
 /* ---- 跳绳：摄像头 + 5秒准备 + 计时/目标 ---- */
 .rope-cam{margin:14px 0 0;border-radius:18px;overflow:hidden;border:1px solid var(--line-soft);box-shadow:var(--shadow-s);background:#0e1116;position:relative;}
-.rope-cam video{width:100%;height:240px;object-fit:cover;display:block;background:#0e1116;transform:scaleX(-1);}
+.rope-cam video{width:100%;height:340px;object-fit:cover;display:block;background:#0e1116;}
 .rope-cam .cam-ph{position:absolute;inset:0;display:grid;place-items:center;color:#7c879c;font-size:13px;text-align:center;padding:20px;line-height:1.6;}
 .rope-cam .cam-status{position:absolute;top:10px;left:10px;background:rgba(11,16,32,.6);color:#fff;font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;display:none;}
 .rope-cam .count-overlay{position:absolute;inset:0;background:rgba(11,16,32,.8);display:none;flex-direction:column;align-items:center;justify-content:center;color:#fff;}
@@ -1130,6 +1130,10 @@ body::before {
 .recent .section-title{margin-bottom:12px;}
 
 /* ---- 分析：按项目分开展示 ---- */
+.an-period-bar{display:flex;justify-content:flex-end;margin-bottom:10px;}
+.an-period-toggle{display:flex;background:#eef1f8;border-radius:12px;padding:3px;}
+.an-period-toggle button{border:none;background:transparent;padding:7px 18px;border-radius:9px;font-size:13px;font-weight:800;color:#64748b;cursor:pointer;}
+.an-period-toggle button.active{background:#fff;color:#0f172a;box-shadow:0 2px 8px rgba(15,23,42,.06);}
 .an-content{display:none;}
 .an-content.show{display:block;}
 .chart-card{margin:8px 0 0;background:linear-gradient(160deg,#1a1f3a,#26224a);border-radius:20px;padding:18px;box-shadow:0 14px 34px rgba(20,16,50,.28);position:relative;overflow:hidden;}
