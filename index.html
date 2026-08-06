@@ -18,8 +18,8 @@
     <!-- Chart.js 已本地自托管（vendor/chart.umd.min.js），不再依赖被墙的 CDN -->
     <!-- ZCOOL KuaiLe 卡通字体本地自托管 -->
     <link rel="stylesheet" href="vendor/ZCOOLKuaiLe.css?v=1">
-    <link rel="stylesheet" href="styles.css?v=15">
-    <script src="vendor/chart.umd.min.js?v=15"></script>
+    <link rel="stylesheet" href="styles.css?v=16">
+    <script src="vendor/chart.umd.min.js?v=16"></script>
 </head>
 <body>
     <div id="app">
@@ -172,8 +172,7 @@
                     <!-- 距离：下拉 + 自定义 -->
                     <div id="f-distance" class="field"><label>距离（米）</label>
                         <select id="distance-select" onchange="App.toggleCustom(this)">
-                            <option>50</option><option>100</option><option>200</option><option>400</option>
-                            <option selected>500</option><option>800</option><option>1000</option><option>1500</option>
+                            <option>50</option><option selected>100</option><option>200</option><option>300</option><option>400</option><option>800</option>
                             <option value="custom">自定义…</option>
                         </select>
                         <input id="distance-custom" placeholder="输入自定义距离（米）" style="margin-top:10px;display:none"/>
@@ -241,7 +240,6 @@
                     </div>
 
                     <div class="record-actions">
-                        <button class="btn-secondary" id="record-cancel-btn">取消</button>
                         <button class="save" id="recordSave">保存并记录 · +积分</button>
                     </div>
 
@@ -326,8 +324,18 @@
 
                     <!-- 游泳分析 -->
                     <div class="an-content show" id="an-swim">
+                        <div class="an-stroke-bar">
+                            <div class="an-stroke-seg" id="an-swim-stroke-seg">
+                                <button class="active" data-sw="all">全部</button>
+                                <button data-sw="自由泳">自由泳</button>
+                                <button data-sw="蛙泳">蛙泳</button>
+                                <button data-sw="仰泳">仰泳</button>
+                                <button data-sw="蝶泳">蝶泳</button>
+                                <button data-sw="混合泳">混合泳</button>
+                            </div>
+                        </div>
                         <div class="chart-card swim">
-                            <div class="ct">各泳姿进步趋势 · 每100m配速(秒)</div>
+                            <div class="ct">进步趋势 · 每100m配速(秒) · 横向为时间</div>
                             <div class="cd" id="a-swim-summary">暂无数据</div>
                             <div id="a-swim-line"></div>
                             <div id="a-swim-legend" class="legend"></div>
@@ -467,7 +475,7 @@
 
                     <button class="logout-btn" id="logout-btn">退出登录</button>
 
-                    <div class="app-version">SwimTrack v14</div>
+                    <div class="app-version">SwimTrack v16</div>
 
                     <div style="height: 100px;"></div>
                 </div>
@@ -686,6 +694,8 @@
         </div>
 
     </div><!-- /app -->
-    <script src="app.js?v=15"></script>
+    <!-- MediaPipe Pose（defer：仅在跳绳开始计时时按需用于「脚落地自动计数」，CDN 不可达时自动回退手动计数） -->
+    <script defer src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/pose.js" crossorigin="anonymous"></script>
+    <script src="app.js?v=16"></script>
 </body>
 </html>
