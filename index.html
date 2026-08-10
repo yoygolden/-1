@@ -18,8 +18,8 @@
     <!-- Chart.js 已本地自托管（vendor/chart.umd.min.js），不再依赖被墙的 CDN -->
     <!-- ZCOOL KuaiLe 卡通字体本地自托管 -->
     <link rel="stylesheet" href="vendor/ZCOOLKuaiLe.css?v=1">
-    <link rel="stylesheet" href="styles.css?v=17">
-    <script src="vendor/chart.umd.min.js?v=17"></script>
+    <link rel="stylesheet" href="styles.css?v=18">
+    <script src="vendor/chart.umd.min.js?v=18"></script>
 </head>
 <body>
     <div id="app">
@@ -311,7 +311,8 @@
                 <div class="page-content">
                     <div class="an-period-bar">
                         <div class="an-period-toggle" id="an-period-toggle">
-                            <button class="active" data-period="week">周</button>
+                            <button class="active" data-period="all">全部</button>
+                            <button data-period="week">周</button>
                             <button data-period="month">月</button>
                             <button data-period="year">年</button>
                         </div>
@@ -699,6 +700,6 @@
     </div><!-- /app -->
     <!-- MediaPipe Pose（defer：仅在跳绳开始计时时按需用于「脚落地自动计数」，CDN 不可达时自动回退手动计数） -->
     <script defer src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/pose.js" crossorigin="anonymous"></script>
-    <script src="app.js?v=17"></script>
+    <script src="app.js?v=18"></script>
 </body>
 </html>

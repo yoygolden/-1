@@ -65,9 +65,15 @@ const Store = {
         });
     },
     deleteRecord(id) {
-        this.updateUser(user => { user.records = user.records.filter(r => r.id !== id); });
+        this.updateUser(user => {
+            user.records = user.records.filter(r => r.id !== id);
+            // 墓碑：记下已删 id，否则云端/其他设备会把这条同步回来
+            if (!Array.isArray(user.deletedIds)) user.deletedIds = [];
+            if (!user.deletedIds.includes(id)) user.deletedIds.push(id);
+        });
     },
-    getRecords() { const user = this.getCurrentUser(); return user ? user.records : []; },
+    getDeletedIds() { const user = this.getCurrentUser(); return (user && Array.isArray(user.deletedIds)) ? user.deletedIds : []; },
+    getRecords() { const user = this.getCurrentUser(); return user ? normalizeRecords(user.records) : []; },
     updateNickname(nickname) { this.updateUser(user => { user.nickname = nickname; }); },
 
     mergeImported(imported) {
@@ -80,18 +86,25 @@ const Store = {
     },
     mergeCloud(cloudRecords) {
         this.updateUser(user => {
+            const dead = new Set(Array.isArray(user.deletedIds) ? user.deletedIds : []);
             const map = {};
-            user.records.forEach(r => (map[r.id] = r));
-            cloudRecords.forEach(r => { if (r && r.id) map[r.id] = { ...r }; });
+            user.records.forEach(r => { if (!dead.has(r.id)) map[r.id] = r; });
+            cloudRecords.forEach(r => { if (r && r.id && !dead.has(r.id)) map[r.id] = { ...r }; });
             user.records = Object.values(map);
         });
     },
     mergeProfile(p) {
         if (!p) return;
         this.updateUser(user => {
+            if (!Array.isArray(user.deletedIds)) user.deletedIds = [];
+            // 合并云端墓碑，保证任一设备删除后全端一致
+            (Array.isArray(p.deletedIds) ? p.deletedIds : []).forEach(id => {
+                if (id && !user.deletedIds.includes(id)) user.deletedIds.push(id);
+            });
+            const dead = new Set(user.deletedIds);
             const recMap = {};
-            user.records.forEach(r => (recMap[r.id] = r));
-            (Array.isArray(p.records) ? p.records : []).forEach(r => { if (r && r.id) recMap[r.id] = { ...r }; });
+            user.records.forEach(r => { if (!dead.has(r.id)) recMap[r.id] = r; });
+            (Array.isArray(p.records) ? p.records : []).forEach(r => { if (r && r.id && !dead.has(r.id)) recMap[r.id] = { ...r }; });
             user.records = Object.values(recMap);
             const ckMap = {};
             (user.checkins || []).forEach(c => (ckMap[c.date] = c));
@@ -126,6 +139,8 @@ const CloudAPI = {
     TOKEN_KEY: 'swimtrack_cloud',
     ACCT_KEY: 'swimtrack_cloud_account',
     NICK_KEY: 'swimtrack_cloud_nick',
+    OFF_KEY: 'swimtrack_cloud_disabled',
+    TIMEOUT_MS: 15000,
 
     get token() { return localStorage.getItem(this.TOKEN_KEY); },
     set token(t) { t ? localStorage.setItem(this.TOKEN_KEY, t) : localStorage.removeItem(this.TOKEN_KEY); },
@@ -133,12 +148,28 @@ const CloudAPI = {
     set account(a) { a ? localStorage.setItem(this.ACCT_KEY, a) : localStorage.removeItem(this.ACCT_KEY); },
     get nickname() { return localStorage.getItem(this.NICK_KEY); },
     set nickname(n) { n ? localStorage.setItem(this.NICK_KEY, n) : localStorage.removeItem(this.NICK_KEY); },
-    get connected() { return !!this.token; },
+    // 用户主动“退出云端”后置位，避免后台任务偷偷把会话又连回去
+    get disabled() { return localStorage.getItem(this.OFF_KEY) === '1'; },
+    set disabled(v) { v ? localStorage.setItem(this.OFF_KEY, '1') : localStorage.removeItem(this.OFF_KEY); },
+    get connected() { return !!this.token && !this.disabled; },
 
     async request(path, opts = {}) {
         const headers = { 'Content-Type': 'application/json' };
         if (this.token) headers['Authorization'] = 'Bearer ' + this.token;
-        const res = await fetch(path, { method: opts.method || 'GET', headers, body: opts.body ? JSON.stringify(opts.body) : undefined });
+        // 超时保护：弱网下 fetch 可能长时间挂起，导致登录界面一直转圈
+        const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        const timer = ctrl ? setTimeout(() => ctrl.abort(), this.TIMEOUT_MS) : null;
+        let res;
+        try {
+            res = await fetch(path, {
+                method: opts.method || 'GET', headers,
+                body: opts.body ? JSON.stringify(opts.body) : undefined,
+                signal: ctrl ? ctrl.signal : undefined
+            });
+        } catch (e) {
+            if (e && e.name === 'AbortError') throw new Error('云端连接超时，请检查网络后重试');
+            throw new Error('云端服务暂不可用（网络异常或后端未启动）');
+        } finally { if (timer) clearTimeout(timer); }
         const text = await res.text();
         let data = {};
         try { data = JSON.parse(text); } catch (e) { throw new Error('云端服务暂不可用（当前访问环境未部署后端服务）'); }
@@ -164,13 +195,14 @@ function syncSignature() {
     const bbSig = Store.getBlindBoxes().map(b => b.id).sort().join(',');
     return recSig + '|' + ckSig + '|' + bbSig;
 }
-function buildProfile() { return { records: Store.getRecords(), checkins: Store.getCheckins(), blindBoxes: Store.getBlindBoxes() }; }
+function buildProfile() { return { records: Store.getRecords(), checkins: Store.getCheckins(), blindBoxes: Store.getBlindBoxes(), deletedIds: Store.getDeletedIds() }; }
 function scheduleCloudSync() {
     if (!CloudAPI.connected) return;
     if (_syncTimer) clearTimeout(_syncTimer);
     _syncTimer = setTimeout(() => { onCloudRefresh(); }, 600);
 }
 async function bindCloudSession(res, account, fallbackNickname, password) {
+    CloudAPI.disabled = false; // 重新登录即恢复云端同步
     CloudAPI.token = res.token;
     CloudAPI.account = res.account;
     CloudAPI.nickname = res.nickname || fallbackNickname || account;
@@ -182,16 +214,34 @@ async function bindCloudSession(res, account, fallbackNickname, password) {
     Store.setSession(account);
     await syncNow();
     _lastSyncSig = syncSignature();
+    // 云端数据到位后强制重绘当前页，避免异地登录后界面还停留在空数据
+    try {
+        if (Router.current === 'home') PageHome.render();
+        else if (Router.current === 'history') PageHistory.render();
+        else if (Router.current === 'analysis' && typeof PageAnalysis !== 'undefined') PageAnalysis.render();
+    } catch (e) {}
 }
 async function unifiedAuth(account, password, isRegister, nickname) {
     let res = null, err = null;
     try { res = isRegister ? await CloudAPI.register(account, password, nickname) : await CloudAPI.login(account, password); }
     catch (e) { err = e; }
-    const unavailable = err && /暂不可用|Failed to fetch|NetworkError|网络/.test(err.message);
+    const unavailable = err && /暂不可用|超时|Failed to fetch|NetworkError|网络/.test(err.message);
     if (!res && unavailable) {
-        const lr = isRegister ? Store.register(account, password, nickname || account) : Store.login(account, password);
+        if (isRegister) {
+            // 注册时后端不可达：先在本地建账号，等联网后由 autoCloudMigrate 迁移上云
+            const lr = Store.register(account, password, nickname || account);
+            if (!lr.ok) return { ok: false, message: lr.msg };
+            return { ok: true, offline: true };
+        }
+        // 登录时后端不可达：只有本机确实存过这个账号才允许离线进入，
+        // 否则必须报错——异地登录时静默放行会让用户看到一个空账号，误以为数据丢了
+        const localUser = Store.getUsers()[account];
+        if (!localUser) {
+            return { ok: false, message: '未能获取云端账号：当前网络连不上服务器，且本机没有该账号的数据。请检查网络后重试。' };
+        }
+        const lr = Store.login(account, password);
         if (!lr.ok) return { ok: false, message: lr.msg };
-        return { ok: true };
+        return { ok: true, offline: true };
     }
     if (!res || !res.token) {
         if (err && /账号不存在/.test(err.message)) {
@@ -206,6 +256,7 @@ async function unifiedAuth(account, password, isRegister, nickname) {
     return { ok: true };
 }
 async function autoCloudMigrate() {
+    if (CloudAPI.disabled) return; // 用户已主动退出云端，不再自动连回
     if (CloudAPI.connected) return;
     const account = Store.getSession();
     if (!account) return;
@@ -227,6 +278,7 @@ async function autoCloudMigrate() {
     } catch (e) {}
 }
 async function reauthCloud() {
+    if (CloudAPI.disabled) return false; // 已退出云端，不静默重连
     const account = Store.getSession();
     if (!account) return false;
     const user = Store.getUsers()[account];
@@ -276,8 +328,20 @@ function onCloudRefresh() {
 const Utils = {
     uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); },
     todayStr() { const d = new Date(); const y = d.getFullYear(); const m = String(d.getMonth() + 1).padStart(2, '0'); const day = String(d.getDate()).padStart(2, '0'); return `${y}-${m}-${day}`; },
-    formatDate(dateStr) { if (!dateStr) return ''; const d = new Date(dateStr); const m = String(d.getMonth() + 1).padStart(2, '0'); const day = String(d.getDate()).padStart(2, '0'); return `${d.getFullYear()}-${m}-${day}`; },
-    formatDateShort(dateStr) { if (!dateStr) return ''; const d = new Date(dateStr); return `${d.getMonth() + 1}/${d.getDate()}`; },
+    // "2026-08-10" 用 new Date() 解析会被当成 UTC，东八区会偏到前一天，这里按本地时间构造
+    parseLocalDate(s) {
+        if (s instanceof Date) return s;
+        const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s || ''));
+        if (!m) { const d = new Date(s); return isNaN(d.getTime()) ? new Date() : d; }
+        return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    },
+    // Date → "YYYY-MM-DD"（本地时区，不用 toISOString 以免整体偏移一天）
+    localDateStr(d) {
+        const x = (d instanceof Date) ? d : new Date(d);
+        return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+    },
+    formatDate(dateStr) { if (!dateStr) return ''; const d = this.parseLocalDate(dateStr); const m = String(d.getMonth() + 1).padStart(2, '0'); const day = String(d.getDate()).padStart(2, '0'); return `${d.getFullYear()}-${m}-${day}`; },
+    formatDateShort(dateStr) { if (!dateStr) return ''; const d = this.parseLocalDate(dateStr); return `${d.getMonth() + 1}/${d.getDate()}`; },
     msToTime(ms) {
         if (ms == null || isNaN(ms)) return { main: '--', ms: '00', full: '--' };
         const totalSec = ms / 1000; const min = Math.floor(totalSec / 60); const sec = Math.floor(totalSec % 60); const cs = Math.floor((ms % 1000) / 10);
@@ -342,12 +406,23 @@ const Router = {
 };
 
 /* ==================== Toast / Confirm ==================== */
+// HTML 转义：昵称、泳姿、盲盒名、图片标题等都可能来自用户输入或云端，拼进 innerHTML 前必须过一遍
+function esc(str) {
+    return String(str == null ? '' : str)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+// 颜色白名单：只允许 #hex / rgb() / 常见颜色名，防止 style 属性注入
+function safeColor(c, fallback = '#888') {
+    const s = String(c == null ? '' : c).trim();
+    return /^(#[0-9a-fA-F]{3,8}|rgba?\([\d\s.,%]+\)|[a-zA-Z]{3,20})$/.test(s) ? s : fallback;
+}
 const Toast = {
     show(msg, opts = {}) {
         const el = document.getElementById('toast'); el.className = 'toast'; if (opts.type) el.classList.add(opts.type);
         let html = '';
         if (opts.type === 'success') html += '<svg class="toast-icon" viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="white" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>';
-        html += `<div>${msg}</div>`; if (opts.sub) html += `<div class="toast-sub">${opts.sub}</div>`;
+        html += `<div>${esc(msg)}</div>`; if (opts.sub) html += `<div class="toast-sub">${esc(opts.sub)}</div>`;
         el.innerHTML = html; el.classList.add('show');
         clearTimeout(this._timer); this._timer = setTimeout(() => el.classList.remove('show'), opts.duration || 2500);
     }
@@ -398,6 +473,19 @@ function drawBlindBoxNow() {
     scheduleCloudSync();
     return item;
 }
+// 老版本记录没有 category 字段，分析页按 category 过滤会整批漏掉它们，这里按内容兜底推断
+function inferCategory(r) {
+    if (!r) return 'swim';
+    if (r.category) return r.category;
+    const s = String(r.stroke || '');
+    if (s.includes('跳绳') || (Number(r.count) > 0 && !Number(r.distance))) return 'rope';
+    if (s.includes('跑') || s.toLowerCase().includes('run')) return 'run';
+    return 'swim';
+}
+// 读取时统一补齐 category，保证分析页统计完整
+function normalizeRecords(list) {
+    return (Array.isArray(list) ? list : []).map(r => (r && !r.category) ? { ...r, category: inferCategory(r) } : r);
+}
 function pointsForRecord(r) {
     if (r.category === 'rope') return 1 + Math.floor((r.count || 0) / 200);
     const dist = r.distance || 0;
@@ -416,7 +504,7 @@ const PageHome = {
         this.renderCheckin();
         this.renderProgressOverview(records);
         const now = new Date();
-        const monthRecords = records.filter(r => { const d = new Date(r.date); return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth(); });
+        const monthRecords = records.filter(r => { const d = Utils.parseLocalDate(r.date); return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth(); });
         const monthDistance = monthRecords.reduce((s, r) => s + (r.distance || 0), 0);
         const monthTime = monthRecords.reduce((s, r) => s + (r.timeMs || 0), 0);
         document.getElementById('home-month-count').textContent = monthRecords.length;
@@ -656,6 +744,21 @@ const PageRecord = {
         }
     },
     commit(newRecord, label) {
+        // 编辑态：更新原记录，不能新增，否则一编辑就多出一条重复数据
+        if (this.editingId) {
+            const id = this.editingId;
+            const patch = { ...newRecord }; delete patch.id; delete patch.createdAt;
+            Store.updateRecord(id, patch);
+            this.editingId = null; Router.editingId = null;
+            scheduleCloudSync();
+            Toast.show(label + '已更新！', { type: 'success', sub: `积分调整为 ${newRecord.earnedPoints}` });
+            document.getElementById('record-page-title').textContent = '记录成绩';
+            this.clearInputs();
+            if (Router.prevView && Router.prevView !== 'record') { Router.navigate(Router.prevView); return; }
+            if (Router.current === 'home') PageHome.render();
+            this.renderRecent();
+            return;
+        }
         Store.addRecord(newRecord); scheduleCloudSync();
         let sub = `获得 ${newRecord.earnedPoints} 积分`;
         if (newRecord.category !== 'rope') {
@@ -665,13 +768,17 @@ const PageRecord = {
             if (prevBest !== null && newRecord.timeMs > 0 && newRecord.timeMs < prevBest) { const diffT = Utils.msToTime(prevBest - newRecord.timeMs); sub = `比最佳快了 ${diffT.main}.${diffT.ms}，并获 ${newRecord.earnedPoints} 积分`; }
         }
         Toast.show(label + '已记录！', { type: 'success', sub });
-        // 清空本次输入，方便连续录入
-        document.getElementById('t-min').value = ''; document.getElementById('t-sec').value = ''; document.getElementById('t-cs').value = '';
-        document.getElementById('distance-custom').value = ''; document.getElementById('run-time').value = '';
-        document.getElementById('rope-count-input').value = ''; document.getElementById('run-distance-fallback').value = '';
-        this.selectedStroke = null; this.runResultDist = 0; this.runRoute = null; this.resetRunUI();
+        this.clearInputs();
         if (Router.current === 'home') PageHome.render();
         this.renderRecent();
+    },
+    // 清空本次输入，方便连续录入
+    clearInputs() {
+        const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+        setVal('t-min', ''); setVal('t-sec', ''); setVal('t-cs', '');
+        setVal('distance-custom', ''); setVal('run-time', '');
+        setVal('rope-count-input', ''); setVal('run-distance-fallback', '');
+        this.selectedStroke = null; this.runResultDist = 0; this.runRoute = null; this.resetRunUI();
     },
     /* ---- 跑步 GPS ---- */
     resetRunUI() {
@@ -865,7 +972,7 @@ const PageRecord = {
         container.innerHTML = list.map(r => {
             const sc = Utils.strokeColor(r.stroke);
             const ti = Utils.typeInfo(r.type);
-            let detailText = (r.category === 'rope') ? `<strong>${sc.emoji}${r.stroke}</strong> · ${r.count} 次` : `<strong>${sc.emoji}${r.stroke}</strong> · ${r.distance >= 1000 ? (r.distance / 1000).toFixed(1) + 'km' : r.distance + '米'}`;
+            let detailText = (r.category === 'rope') ? `<strong>${esc(sc.emoji)}${esc(r.stroke)}</strong> · ${r.count} 次` : `<strong>${esc(sc.emoji)}${esc(r.stroke)}</strong> · ${r.distance >= 1000 ? (r.distance / 1000).toFixed(1) + 'km' : r.distance + '米'}`;
             let timeText = '';
             if (r.timeMs > 0) { const t = Utils.msToTime(r.timeMs); timeText = `${t.main}<span class="ms-part">.${t.ms}</span>`; }
             return `<div class="history-item" data-id="${r.id}">
@@ -966,7 +1073,7 @@ const PageHistory = {
         records.forEach(r => { const key = `${r.stroke}-${r.distance}-${r.type || 'training'}`; if (!bestMap[key] || r.timeMs < bestMap[key].timeMs) bestMap[key] = r; });
         container.innerHTML = filtered.map(r => {
             const sc = Utils.strokeColor(r.stroke); const isPB = bestMap[`${r.stroke}-${r.distance}-${r.type || 'training'}`]?.id === r.id; const ti = Utils.typeInfo(r.type);
-            let detailText = (r.category === 'rope') ? `<strong>${sc.emoji}${r.stroke}</strong> · ${r.count} 次` : `<strong>${sc.emoji}${r.stroke}</strong> · ${r.distance >= 1000 ? (r.distance / 1000).toFixed(1) + 'km' : r.distance + '米'}`;
+            let detailText = (r.category === 'rope') ? `<strong>${esc(sc.emoji)}${esc(r.stroke)}</strong> · ${r.count} 次` : `<strong>${esc(sc.emoji)}${esc(r.stroke)}</strong> · ${r.distance >= 1000 ? (r.distance / 1000).toFixed(1) + 'km' : r.distance + '米'}`;
             let timeText = ''; if (r.timeMs > 0) { const t = Utils.msToTime(r.timeMs); timeText = `${t.main}<span class="ms-part">.${t.ms}</span>`; }
             return `<div class="history-item ${isPB ? 'history-item-pb' : ''}" data-id="${r.id}">
                 ${isPB ? `<div class="history-trophy"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19 5h-2V3H7v2H5a2 2 0 00-2 2v3a4 4 0 003.5 3.97V18a2 2 0 002 2h2v1h4v-1h2a2 2 0 002-2v-4.03A4 4 0 0021 10V7a2 2 0 00-2-2zM5 10V7h2v5.83A2 2 0 015 10zm14 0a2 2 0 01-2 2.83V7h2v3z"/></svg></div>` : '<div style="width:28px;"></div>'}
@@ -983,7 +1090,7 @@ const PageHistory = {
 /* ==================== 页面：成绩分析（按项目分开展示） ==================== */
 const PageAnalysis = {
     currentProj: 'swim',
-    currentPeriod: 'week',
+    currentPeriod: 'all', // 默认展示全部数据，避免用户以为记录没被统计到
     currentSwimStroke: 'all',
     currentSwimDist: 'all',
     runChart: null, ropeChart: null,
@@ -1028,15 +1135,16 @@ const PageAnalysis = {
         seg.querySelectorAll('button').forEach(btn => btn.addEventListener('click', () => this.setSwimDist(btn.dataset.dist)));
     },
     filterByPeriod(records) {
+        if (this.currentPeriod === 'all') return records.slice(); // 全部：不做时间裁剪
         const now = new Date();
         let from = new Date(0);
         if (this.currentPeriod === 'week') from = new Date(now.getTime() - 7 * 86400000);
         else if (this.currentPeriod === 'month') from = new Date(now.getTime() - 30 * 86400000);
         else if (this.currentPeriod === 'year') from = new Date(now.getTime() - 365 * 86400000);
-        const fromStr = from.toISOString().slice(0, 10);
+        const fromStr = Utils.localDateStr(from); // 本地时区，避免边界日被误裁掉
         return records.filter(r => r.date >= fromStr);
     },
-    periodLabel() { return this.currentPeriod === 'week' ? '近 7 天' : this.currentPeriod === 'month' ? '近 30 天' : '近 1 年'; },
+    periodLabel() { return this.currentPeriod === 'all' ? '全部' : this.currentPeriod === 'week' ? '近 7 天' : this.currentPeriod === 'month' ? '近 30 天' : '近 1 年'; },
     render() {
         if (this.currentProj === 'swim') this.renderSwim();
         else if (this.currentProj === 'run') this.renderRun();
@@ -1219,20 +1327,32 @@ const PageBlindbox = {
         for (let i = 0; i < 9; i++) {
             if (i < collected.length) {
                 const it = collected[i];
-                html += `<div class="box opened" title="${it.name}"><div class="emo">${it.icon}</div><span class="tag">${it.label}</span></div>`;
+                html += `<div class="box opened" title="${esc(it.name)}"><div class="emo">${esc(it.icon)}</div><span class="tag">${esc(it.label)}</span></div>`;
             } else {
                 html += `<div class="box" data-draw="1"><div class="shine"></div><div class="emo">🎁</div><span class="tag">待开启</span></div>`;
             }
         }
         boxes.innerHTML = html;
         boxes.querySelectorAll('.box[data-draw]').forEach(b => b.addEventListener('click', () => this.draw()));
+        // 页面底部那颗“消耗 10 积分抽一次”按钮此前没有绑定过事件，点了没反应
+        const drawBtn = document.getElementById('bb-draw');
+        if (drawBtn && !drawBtn.dataset.bound) {
+            drawBtn.dataset.bound = '1';
+            drawBtn.addEventListener('click', () => this.draw());
+        }
+        if (drawBtn) {
+            const enough = points >= 10;
+            drawBtn.disabled = !enough;
+            drawBtn.style.opacity = enough ? '' : '.55';
+            drawBtn.textContent = enough ? '🎁 消耗 10 积分抽一次' : `🎁 积分不足（${points}/10）`;
+        }
         // 荣誉墙
         const wall = document.getElementById('bb-wall');
         const items = collected.slice().sort((a, b) => b.createdAt - a.createdAt);
         if (items.length === 0) { wall.innerHTML = '<div style="color:var(--ink-faint);font-size:13px;padding:8px 0">抽中盲盒后会展示在这里 🏆</div>'; return; }
         const rkLabel = { common: '普通', classic: '经典', rare: '稀有', limited: '限定', collector: '典藏' };
         const rkClass = { common: 'normal', classic: 'normal', rare: 'rare', limited: 'limited', collector: 'limited' };
-        wall.innerHTML = items.map(it => `<div class="wcard"><div class="em">${it.icon}</div><div class="nm">${ModalDetail.escapeHtml(it.name)}</div><div class="rk ${rkClass[it.rarity] || 'normal'}">${rkLabel[it.rarity] || '普通'}</div></div>`).join('');
+        wall.innerHTML = items.map(it => `<div class="wcard"><div class="em">${esc(it.icon)}</div><div class="nm">${esc(it.name)}</div><div class="rk ${rkClass[it.rarity] || 'normal'}">${esc(rkLabel[it.rarity] || '普通')}</div></div>`).join('');
     },
     draw() {
         const it = drawBlindBoxNow();
@@ -1271,7 +1391,15 @@ const PageProfile = {
             card.querySelector('#cloud-upload').addEventListener('click', () => this.cloudUpload(card));
             card.querySelector('#cloud-download').addEventListener('click', () => this.cloudDownload(card));
             card.querySelector('#cloud-sync').addEventListener('click', () => this.cloudSync(card));
-            card.querySelector('#cloud-logout').addEventListener('click', () => { CloudAPI.token = null; CloudAPI.account = null; CloudAPI.nickname = null; Toast.show('已退出云端', { type: 'success' }); this.renderCloud(); });
+            card.querySelector('#cloud-logout').addEventListener('click', () => {
+                const acc = CloudAPI.account;
+                CloudAPI.token = null; CloudAPI.account = null; CloudAPI.nickname = null;
+                CloudAPI.disabled = true; // 置位，防止后台任务用本地保存的密码自动登录回去
+                // 清掉本地留存的明文密码，否则“退出”形同虚设
+                if (acc) { const us = Store.getUsers(); if (us[acc]) { us[acc].password = ''; Store.saveUsers(us); } }
+                Toast.show('已退出云端', { type: 'success', sub: '本机数据保留，重新登录可恢复同步' });
+                this.renderCloud();
+            });
         } else {
             card.innerHTML = `
                 <div class="cloud-title">☁️ 云端同步</div>
@@ -1293,7 +1421,15 @@ const PageProfile = {
         const account = card.querySelector('#cloud-account').value.trim(); const password = card.querySelector('#cloud-password').value; const nickname = card.querySelector('#cloud-nickname').value.trim();
         if (!account || !password) { this.cloudMsg(card, '请填写账号和密码', true); return; }
         if (isRegister && !nickname) { this.cloudMsg(card, '注册请填写昵称', true); return; }
-        try { const res = isRegister ? await CloudAPI.register(account, password, nickname) : await CloudAPI.login(account, password); CloudAPI.token = res.token; CloudAPI.account = res.account; CloudAPI.nickname = res.nickname; Toast.show(isRegister ? '注册成功，已登录云端' : '已登录云端', { type: 'success' }); this.renderCloud(); }
+        this.cloudMsg(card, isRegister ? '注册中…' : '登录中…', false);
+        try {
+            const res = isRegister ? await CloudAPI.register(account, password, nickname) : await CloudAPI.login(account, password);
+            if (!res || !res.token) throw new Error('未能获取云端账号，请稍后重试');
+            // 走统一入口：清除退出标记、写入本地账号、立刻拉取云端数据并重绘
+            await bindCloudSession(res, account, nickname, password);
+            Toast.show(isRegister ? '注册成功，已登录云端' : '已登录云端', { type: 'success', sub: '已拉取云端数据' });
+            this.renderCloud();
+        }
         catch (e) { this.cloudMsg(card, e.message || '操作失败', true); }
     },
     async cloudUpload(card) { try { const p = buildProfile(); await CloudAPI.syncProfile(p); this.cloudMsg(card, `已上传 ${p.records.length} 条记录、${p.checkins.length} 次打卡、${p.blindBoxes.length} 个盲盒到云端`, false); Toast.show('已同步到云端', { type: 'success' }); } catch (e) { this.cloudMsg(card, e.message || '上传失败', true); } },
@@ -1375,11 +1511,11 @@ const PageGallery = {
             return;
         }
         if (isBlind) {
-            container.innerHTML = list.map(it => `<div class="blindbox-item" data-id="${it.id}" style="--rc:${it.color}"><div class="blindbox-item-icon" style="color:${it.color}">${it.icon}</div><div class="blindbox-item-tag" style="background:${it.color}">${it.label}</div><div class="blindbox-item-name">${ModalDetail.escapeHtml(it.name)}</div><div class="blindbox-item-date">${Utils.formatDate(it.date)}</div></div>`).join('');
+            container.innerHTML = list.map(it => { const c = safeColor(it.color); return `<div class="blindbox-item" data-id="${esc(it.id)}" style="--rc:${c}"><div class="blindbox-item-icon" style="color:${c}">${esc(it.icon)}</div><div class="blindbox-item-tag" style="background:${c}">${esc(it.label)}</div><div class="blindbox-item-name">${esc(it.name)}</div><div class="blindbox-item-date">${esc(Utils.formatDate(it.date))}</div></div>`; }).join('');
             container.querySelectorAll('.blindbox-item').forEach(el => el.addEventListener('click', () => this.openBlindBoxPreview(el.dataset.id)));
             return;
         }
-        container.innerHTML = list.map(it => `<div class="gallery-item" data-id="${it.id}"><img src="${it.data}" alt="${it.title || ''}" loading="lazy"><div class="gallery-item-overlay"><span class="gallery-item-badge">${it.kind === 'cert' ? '🏆 奖状' : '📷 照片'}</span>${it.title ? `<span class="gallery-item-title">${ModalDetail.escapeHtml(it.title)}</span>` : ''}</div></div>`).join('');
+        container.innerHTML = list.map(it => `<div class="gallery-item" data-id="${esc(it.id)}"><img src="${esc(it.data)}" alt="${esc(it.title || '')}" loading="lazy"><div class="gallery-item-overlay"><span class="gallery-item-badge">${it.kind === 'cert' ? '🏆 奖状' : '📷 照片'}</span>${it.title ? `<span class="gallery-item-title">${esc(it.title)}</span>` : ''}</div></div>`).join('');
         container.querySelectorAll('.gallery-item').forEach(el => el.addEventListener('click', () => this.openPreview(el.dataset.id)));
     },
     openBlindBoxPreview(id) { const item = Store.getBlindBoxes().find(i => i.id === id); if (item) PageHome.showBlindBoxResult(item); },
@@ -1407,12 +1543,12 @@ function bindEvents() {
     document.getElementById('login-form').addEventListener('submit', async (e) => {
         e.preventDefault(); const account = document.getElementById('login-account').value.trim(); const password = document.getElementById('login-password').value; const errEl = document.getElementById('login-error'); errEl.textContent = '';
         if (!account) { errEl.textContent = '请输入账号'; return; } if (!password) { errEl.textContent = '请输入密码'; return; }
-        errEl.textContent = '登录中…'; const r = await unifiedAuth(account, password, false, ''); if (r.ok) { enterApp(); return; } errEl.textContent = r.message;
+        errEl.textContent = '登录中…'; const r = await unifiedAuth(account, password, false, ''); if (r.ok) { enterApp(); if (r.offline) Toast.show('离线模式：未连上云端', { type: 'warn', sub: '仅显示本机数据，联网后会自动同步' }); return; } errEl.textContent = r.message;
     });
     document.getElementById('register-form').addEventListener('submit', async (e) => {
         e.preventDefault(); const nickname = document.getElementById('reg-nickname').value.trim(); const account = document.getElementById('reg-account').value.trim(); const password = document.getElementById('reg-password').value; const errEl = document.getElementById('register-error'); errEl.textContent = '';
         if (!nickname) { errEl.textContent = '请输入昵称'; return; } if (!account) { errEl.textContent = '请输入账号'; return; } if (!password || password.length < 4) { errEl.textContent = '密码至少4位'; return; }
-        errEl.textContent = '注册中…'; const r = await unifiedAuth(account, password, true, nickname); if (r.ok) { enterApp(); return; } errEl.textContent = r.message;
+        errEl.textContent = '注册中…'; const r = await unifiedAuth(account, password, true, nickname); if (r.ok) { enterApp(); if (r.offline) Toast.show('离线注册成功', { type: 'warn', sub: '联网后会自动同步到云端' }); return; } errEl.textContent = r.message;
     });
 
     // 全局导航（底部导航 + data-nav 链接）
@@ -1463,9 +1599,11 @@ function bindEvents() {
     document.getElementById('nickname-cancel').addEventListener('click', () => document.getElementById('nickname-modal').classList.remove('active'));
     document.getElementById('nickname-save').addEventListener('click', () => { const val = document.getElementById('nickname-input').value.trim(); if (!val) { Toast.show('昵称不能为空'); return; } Store.updateNickname(val); document.getElementById('nickname-modal').classList.remove('active'); PageProfile.render(); Toast.show('昵称已更新', { type: 'success' }); });
     document.getElementById('logout-btn').addEventListener('click', async () => { const ok = await Confirm.show('确定要退出登录吗？'); if (ok) { Store.clearSession(); document.getElementById('main-app').classList.add('hidden'); document.getElementById('auth-view').classList.add('active'); document.getElementById('login-account').value = ''; document.getElementById('login-password').value = ''; document.getElementById('reg-nickname').value = ''; document.getElementById('reg-account').value = ''; document.getElementById('reg-password').value = ''; } });
-    document.getElementById('export-data-btn').addEventListener('click', () => { const user = Store.getCurrentUser(); if (!user) return; const records = user.records; if (records.length === 0) { Toast.show('暂无数据可导出'); return; } const data = { nickname: user.nickname, account: user.account, exportDate: new Date().toISOString(), totalRecords: records.length, records: records.map(r => ({ id: r.id, date: r.date, stroke: r.stroke, distance: r.distance, type: r.type || 'training', eventName: r.eventName || '', timeMs: r.timeMs, time: Utils.msToTime(r.timeMs).full, note: r.note || '' })) }; const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `swimtrack_${user.nickname}_${Utils.todayStr()}.json`; a.click(); URL.revokeObjectURL(url); Toast.show('数据已导出', { type: 'success' }); });
+    document.getElementById('export-data-btn').addEventListener('click', () => { const user = Store.getCurrentUser(); if (!user) return; const records = user.records; if (records.length === 0) { Toast.show('暂无数据可导出'); return; } const data = { nickname: user.nickname, account: user.account, exportDate: new Date().toISOString(), totalRecords: records.length, records: records.map(r => ({ id: r.id, date: r.date, category: r.category || 'swim', stroke: r.stroke, distance: r.distance || 0, count: r.count || 0, type: r.type || 'training', eventName: r.eventName || '', timeMs: r.timeMs, time: Utils.msToTime(r.timeMs).full, note: r.note || '', route: r.route || null, earnedPoints: r.earnedPoints || 0, createdAt: r.createdAt || null })), checkins: user.checkins || [], blindBoxes: user.blindBoxes || [] }; const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `swimtrack_${user.nickname}_${Utils.todayStr()}.json`; a.click(); URL.revokeObjectURL(url); Toast.show('数据已导出', { type: 'success' }); });
     document.getElementById('import-data-btn').addEventListener('click', () => document.getElementById('import-file').click());
-    document.getElementById('import-file').addEventListener('change', (e) => { const file = e.target.files && e.target.files[0]; e.target.value = ''; if (!file) return; const reader = new FileReader(); reader.onload = () => { try { const data = JSON.parse(reader.result); const raw = Array.isArray(data) ? data : (data.records || []); if (!Array.isArray(raw) || raw.length === 0) { Toast.show('文件中没有可导入的记录'); return; } const imported = raw.map(r => ({ id: r.id || Utils.uid(), stroke: r.stroke, distance: Number(r.distance) || 0, timeMs: (r.timeMs != null) ? Number(r.timeMs) : Utils.timeToMs(r.time), date: r.date || Utils.todayStr(), type: r.type || 'training', eventName: r.eventName || '', note: r.note || '', createdAt: r.createdAt || Date.now() })).filter(r => r.stroke && r.distance && r.timeMs >= 0); if (imported.length === 0) { Toast.show('没有有效的记录可导入'); return; } if (confirm(`确定导入 ${imported.length} 条记录吗？\n（与本地记录按编号合并，不会丢失本地已有数据）`)) { Store.mergeImported(imported); scheduleCloudSync(); Toast.show(`已导入 ${imported.length} 条记录`, { type: 'success' }); if (document.getElementById('history-view').classList.contains('active')) PageHistory.render(); if (document.getElementById('analysis-view')) PageAnalysis.render(); } } catch (err) { Toast.show('文件解析失败，请检查是否为正确的备份文件'); } }; reader.readAsText(file); });
+    document.getElementById('import-file').addEventListener('change', (e) => { const file = e.target.files && e.target.files[0]; e.target.value = ''; if (!file) return; const reader = new FileReader(); reader.onload = () => { try { const data = JSON.parse(reader.result); const raw = Array.isArray(data) ? data : (data.records || []); if (!Array.isArray(raw) || raw.length === 0) { Toast.show('文件中没有可导入的记录'); return; } const imported = raw.map(r => { const rec = { id: r.id || Utils.uid(), stroke: r.stroke, category: r.category || inferCategory(r), distance: Number(r.distance) || 0, count: Number(r.count) || 0, timeMs: (r.timeMs != null) ? Number(r.timeMs) : Utils.timeToMs(r.time), date: r.date || Utils.todayStr(), type: r.type || 'training', eventName: r.eventName || '', note: r.note || '', route: r.route || null, createdAt: r.createdAt || Date.now() }; rec.earnedPoints = pointsForRecord(rec); return rec; })
+                    // 跳绳距离为 0，旧版这里用 r.distance 做真值判断会把跳绳记录整批丢掉
+                    .filter(r => r.stroke && r.timeMs >= 0 && (r.distance > 0 || r.count > 0)); if (imported.length === 0) { Toast.show('没有有效的记录可导入'); return; } if (confirm(`确定导入 ${imported.length} 条记录吗？\n（与本地记录按编号合并，不会丢失本地已有数据）`)) { Store.mergeImported(imported); scheduleCloudSync(); Toast.show(`已导入 ${imported.length} 条记录`, { type: 'success' }); if (document.getElementById('history-view').classList.contains('active')) PageHistory.render(); if (document.getElementById('analysis-view')) PageAnalysis.render(); } } catch (err) { Toast.show('文件解析失败，请检查是否为正确的备份文件'); } }; reader.readAsText(file); });
     document.getElementById('about-btn').addEventListener('click', () => document.getElementById('about-modal').classList.add('active'));
     document.getElementById('about-close').addEventListener('click', () => document.getElementById('about-modal').classList.remove('active'));
     document.getElementById('feedback-btn').addEventListener('click', () => { document.getElementById('feedback-text').value = ''; document.getElementById('feedback-modal').classList.add('active'); });

@@ -27,6 +27,10 @@ function loadStore() {
                 const u = s.users[acc];
                 if (u && typeof u.token === 'string') { u.tokens = [u.token]; delete u.token; }
                 if (!Array.isArray(u.tokens)) u.tokens = [];
+                if (!Array.isArray(u.deletedIds)) u.deletedIds = [];
+                if (!Array.isArray(u.records)) u.records = [];
+                if (!Array.isArray(u.checkins)) u.checkins = [];
+                if (!Array.isArray(u.blindBoxes)) u.blindBoxes = [];
             }
         }
         return s;
@@ -58,11 +62,38 @@ function newToken() {
     return crypto.randomBytes(24).toString('hex');
 }
 const BLINDBOX_COST = 10; // 抽一次盲盒消耗的积分（需与前端一致）
+// 服务端按记录内容重算积分，不信任客户端上报的 earnedPoints（规则需与前端 pointsForRecord 一致）
+function derivePoints(r) {
+    if (!r) return 0;
+    if (r.category === 'rope') return 1 + Math.floor((Number(r.count) || 0) / 200);
+    const dist = Number(r.distance) || 0;
+    if (r.category === 'run') return Math.max(1, Math.round(dist / 1000));
+    return Math.max(1, Math.round(dist / 250));
+}
+// 过滤掉已软删除的记录，避免其他设备把删掉的记录同步回来（“删除复活”）
+function liveRecords(u) {
+    const dead = new Set(Array.isArray(u.deletedIds) ? u.deletedIds : []);
+    return (u.records || []).filter((r) => r && !dead.has(r.id));
+}
+// 打卡积分同样服务端重算，规则与前端一致：5 + floor(此前累计数/5) + min(连续天数-1, 5)
+function deriveCheckinTotal(checkins) {
+    const list = (checkins || []).filter((c) => c && c.date)
+        .map((c) => c.date).sort();
+    const uniq = [...new Set(list)];
+    let total = 0, streak = 0, prev = null;
+    uniq.forEach((date, i) => {
+        if (prev && (Date.parse(date + 'T00:00:00Z') - Date.parse(prev + 'T00:00:00Z')) === 86400000) streak += 1;
+        else streak = 1;
+        total += 5 + Math.floor(i / 5) + Math.min(streak - 1, 5);
+        prev = date;
+    });
+    return total;
+}
 // 积分始终由「打卡+记录」派生，盲盒消耗，保证多端一致：
 // 积分 = Σ打卡积分 + Σ记录积分 − 盲盒数×成本
 function computePoints(u) {
-    const earned = (u.checkins || []).reduce((s, c) => s + (c.points || 0), 0)
-                + (u.records || []).reduce((s, r) => s + (r.earnedPoints || 0), 0);
+    const earned = deriveCheckinTotal(u.checkins)
+                + liveRecords(u).reduce((s, r) => s + derivePoints(r), 0);
     const spent = (u.blindBoxes || []).length * BLINDBOX_COST;
     return Math.max(0, earned - spent);
 }
@@ -146,7 +177,8 @@ async function handleApi(req, res, url) {
             nickname: b.nickname || b.account,
             records: [],
             checkins: [],
-            blindBoxes: []
+            blindBoxes: [],
+            deletedIds: []
         };
         saveStore();
         return send(res, 200, { token, nickname: store.users[b.account].nickname, account: b.account });
@@ -163,7 +195,7 @@ async function handleApi(req, res, url) {
         u.tokens = Array.isArray(u.tokens) ? u.tokens : [];
         const token = newToken();
         u.tokens.push(token);
-        if (u.tokens.length > 5) u.tokens = u.tokens.slice(-5); // 保留最近 5 台设备的会话
+        if (u.tokens.length > 10) u.tokens = u.tokens.slice(-10); // 保留最近 10 台设备的会话
         saveStore();
         return send(res, 200, { token: token, nickname: u.nickname, account: u.account });
     }
@@ -185,7 +217,7 @@ async function handleApi(req, res, url) {
 
     // 记录列表
     if (p === '/api/records' && method === 'GET') {
-        return send(res, 200, { records: user.records });
+        return send(res, 200, { records: liveRecords(user) });
     }
 
     // 新增记录
@@ -199,14 +231,18 @@ async function handleApi(req, res, url) {
         const item = {
             id: rec.id || crypto.randomBytes(8).toString('hex'),
             stroke: rec.stroke,
-            distance: rec.distance,
-            timeMs: rec.timeMs,
+            category: rec.category || 'swim',
+            distance: Number(rec.distance) || 0,
+            count: Number(rec.count) || 0,
+            timeMs: Number(rec.timeMs) || 0,
             date: rec.date || new Date().toISOString().slice(0, 10),
             type: rec.type || 'training',
             eventName: rec.eventName || '',
             note: rec.note || '',
+            route: rec.route || null,
             createdAt: rec.createdAt || now
         };
+        item.earnedPoints = derivePoints(item); // 服务端重算，忽略客户端上报值
         user.records.push(item);
         saveStore();
         return send(res, 200, { record: item });
@@ -220,13 +256,18 @@ async function handleApi(req, res, url) {
         if (method === 'PUT') {
             if (idx < 0) return send(res, 404, { error: '记录不存在' });
             const b = await readBody(req);
-            user.records[idx] = { ...user.records[idx], ...b.record, id };
+            const merged = { ...user.records[idx], ...b.record, id };
+            merged.earnedPoints = derivePoints(merged); // 编辑后重算积分
+            user.records[idx] = merged;
             saveStore();
-            return send(res, 200, { record: user.records[idx] });
+            return send(res, 200, { record: merged });
         }
         if (method === 'DELETE') {
             if (idx < 0) return send(res, 404, { error: '记录不存在' });
             user.records.splice(idx, 1);
+            // 记入墓碑，防止其他设备把这条记录再同步回来
+            if (!Array.isArray(user.deletedIds)) user.deletedIds = [];
+            if (!user.deletedIds.includes(id)) user.deletedIds.push(id);
             saveStore();
             return send(res, 200, { ok: true });
         }
@@ -235,11 +276,17 @@ async function handleApi(req, res, url) {
     // 同步全量资料（记录+打卡+盲盒），按各自主键合并，返回最新全量（多端一致）
     if (p === '/api/sync' && method === 'POST') {
         const b = await readBody(req);
-        // 记录：按 id 合并
+        // 删除墓碑：合并客户端上报的已删 id
+        if (!Array.isArray(user.deletedIds)) user.deletedIds = [];
+        (Array.isArray(b.deletedIds) ? b.deletedIds : []).forEach((id) => {
+            if (id && !user.deletedIds.includes(id)) user.deletedIds.push(id);
+        });
+        const dead = new Set(user.deletedIds);
+        // 记录：按 id 合并，已删除的一律不再收回
         const recMap = {};
-        user.records.forEach((r) => (recMap[r.id] = r));
+        user.records.forEach((r) => { if (r && !dead.has(r.id)) recMap[r.id] = r; });
         (Array.isArray(b.records) ? b.records : []).forEach((r) => {
-            if (r && r.id) recMap[r.id] = { ...r };
+            if (r && r.id && !dead.has(r.id)) recMap[r.id] = { ...r, earnedPoints: derivePoints(r) };
         });
         user.records = Object.values(recMap);
         // 打卡：按 date 合并（每日一条）
@@ -258,9 +305,10 @@ async function handleApi(req, res, url) {
         user.blindBoxes = Object.values(bbMap);
         saveStore();
         return send(res, 200, {
-            records: user.records,
+            records: liveRecords(user),
             checkins: user.checkins,
             blindBoxes: user.blindBoxes,
+            deletedIds: user.deletedIds,
             points: computePoints(user)
         });
     }
@@ -268,9 +316,10 @@ async function handleApi(req, res, url) {
     // 拉取全量资料（记录+打卡+盲盒+积分），用于多端同步
     if (p === '/api/profile' && method === 'GET') {
         return send(res, 200, {
-            records: user.records,
+            records: liveRecords(user),
             checkins: user.checkins,
             blindBoxes: user.blindBoxes,
+            deletedIds: Array.isArray(user.deletedIds) ? user.deletedIds : [],
             points: computePoints(user)
         });
     }
@@ -283,7 +332,9 @@ async function handleApi(req, res, url) {
             account: user.account,
             nickname: user.nickname,
             exportedAt: new Date().toISOString(),
-            records: user.records
+            records: liveRecords(user),
+            checkins: user.checkins || [],
+            blindBoxes: user.blindBoxes || []
         });
     }
 
@@ -291,17 +342,26 @@ async function handleApi(req, res, url) {
     if (p === '/api/import' && method === 'POST') {
         const b = await readBody(req);
         const recs = Array.isArray(b.records) ? b.records : [];
-        user.records = recs.map((r) => ({
-            id: r.id || crypto.randomBytes(8).toString('hex'),
-            stroke: r.stroke,
-            distance: r.distance,
-            timeMs: r.timeMs,
-            date: r.date,
-            type: r.type || 'training',
-            eventName: r.eventName || '',
-            note: r.note || '',
-            createdAt: r.createdAt || Date.now()
-        }));
+        user.records = recs.map((r) => {
+            const item = {
+                id: r.id || crypto.randomBytes(8).toString('hex'),
+                stroke: r.stroke,
+                category: r.category || 'swim',
+                distance: Number(r.distance) || 0,
+                count: Number(r.count) || 0,
+                timeMs: Number(r.timeMs) || 0,
+                date: r.date,
+                type: r.type || 'training',
+                eventName: r.eventName || '',
+                note: r.note || '',
+                route: r.route || null,
+                createdAt: r.createdAt || Date.now()
+            };
+            item.earnedPoints = derivePoints(item);
+            return item;
+        });
+        // 导入是整体覆盖，墓碑随之清空，避免旧删除记录挡住重新导入的数据
+        user.deletedIds = [];
         saveStore();
         return send(res, 200, { ok: true, count: user.records.length });
     }

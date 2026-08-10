@@ -2,3 +2,6 @@ node_modules/
 data/
 *.log
 .DS_Store
+_test_acct.js
+_testrun/
+_testdata/
