@@ -5,3 +5,6 @@ data/
 _test_acct.js
 _testrun/
 _testdata/
+# 临时日志 / 杂项（不进入仓库）
+_*.txt
+*.Unicode
