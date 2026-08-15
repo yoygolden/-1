@@ -10,9 +10,13 @@
  */
 const crypto = require('crypto');
 
-// 惰性加载 fs/path：Workers 运行时无 fs，但生产用 D1 不会走到本地文件分支
+// 动态获取 fs/path：用 process.getBuiltinModule 而非静态 require，
+// 避免 esbuild（wrangler 构建 Worker 时）因无法解析 'fs' 而构建失败；
+// 在 Node 本地运行时仍可用本地文件持久化，在 Workers 中则为 null（走 D1）。
 let fs = null, path = null;
-try { fs = require('fs'); path = require('path'); } catch (e) {}
+if (typeof process !== 'undefined' && typeof process.getBuiltinModule === 'function') {
+    try { fs = process.getBuiltinModule('fs'); path = process.getBuiltinModule('path'); } catch (e) {}
+}
 
 const ROOT = __dirname;
 const DATA_DIR = (typeof process !== 'undefined' && process.env && process.env.DATA_DIR)
