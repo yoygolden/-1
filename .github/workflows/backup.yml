@@ -1,0 +1,38 @@
+name: Daily backup
+
+# 每日把线上 SwimTrack 的整库（/api/backup）下载并提交到仓库 backups/store.json。
+# 配合 Render 的 BOOTSTRAP_URL 指向该 raw 文件，实现「重部署自愈、数据不丢」。
+on:
+  schedule:
+    - cron: '23 16 * * *'   # 每天 UTC 16:23（避开整点，降低与 GitHub 限流冲突）
+  workflow_dispatch: {}      # 允许手动触发
+
+permissions:
+  contents: write
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download store from app
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          EXPORT_TOKEN: ${{ secrets.EXPORT_TOKEN }}
+        run: |
+          mkdir -p backups
+          curl -fsSL -H "x-backup-token: ${EXPORT_TOKEN}" "${APP_URL}/api/backup" -o backups/store.json
+          echo "downloaded bytes: $(wc -c < backups/store.json)"
+
+      - name: Commit backup
+        run: |
+          git config user.name "swimtrack-bot"
+          git config user.email "bot@swimtrack.local"
+          git add backups/store.json
+          if git diff --cached --quiet; then
+            echo "no changes, skip commit"
+          else
+            git commit -m "chore: daily backup $(date -u +%F)"
+            git push
+          fi
