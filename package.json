@@ -1,17 +1,13 @@
 {
   "name": "swimtrack",
   "version": "1.0.0",
-  "description": "SwimTrack 游泳成绩追踪 - 云端账号后端（GitHub + Cloudflare Workers + D1 + R2）",
+  "description": "SwimTrack 游泳成绩追踪 - 云端账号后端（GitHub + Railway 部署，持久化卷存储）",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "worker": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "dev": "node server.js"
   },
   "engines": {
     "node": ">=18"
-  },
-  "devDependencies": {
-    "wrangler": "^3.78.0"
   }
 }
