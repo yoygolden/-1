@@ -4,7 +4,8 @@
  * - 账号注册 / 登录（scrypt 密码哈希 + Bearer Token）
  * - 成绩记录同步 CRUD / 导入导出
  * - 积分服务端重算（不信任客户端上报）
- * 持久化：默认本地文件；配置 Cloudflare D1 环境变量后改用 D1（跨设备共享同一份数据）
+ * 持久化：默认本地文件（Railway 部署时把持久化卷挂到 DATA_DIR 即可跨重部署保留）；
+ * 可选配置 Cloudflare D1 环境变量后改用 D1（异地共享同一份数据）。写入采用原子写 + 本地滚动备份。
  *
  * 本文件不依赖 http / 静态文件服务，只导出可被子进程 / Worker 复用的函数。
  */
@@ -22,9 +23,13 @@ const ROOT = __dirname;
 const DATA_DIR = (typeof process !== 'undefined' && process.env && process.env.DATA_DIR)
     || (path ? path.join(ROOT, 'data') : '/tmp');
 const STORE_FILE = path ? path.join(DATA_DIR, 'store.json') : '/tmp/store.json';
+const BACKUP_DIR = path ? path.join(DATA_DIR, 'backups') : '/tmp/backups';
 
 // ---------- 数据持久化 ----------
-const d1 = require('./d1store');
+// D1 后端为可选依赖：仅在显式配置 Cloudflare D1 环境变量时启用；
+// Railway 等纯 Node 部署不需要它，require 失败也不影响本地文件存储。
+let d1 = null;
+try { d1 = require('./d1store'); } catch (e) { d1 = null; }
 let store = { users: {} };
 
 // 旧数据兼容：token(字符串) → tokens(数组)，并补齐各数组字段，支持多设备同时登录
@@ -44,7 +49,7 @@ function normalizeStore(s) {
 }
 
 async function loadStore() {
-    if (d1.isConfigured()) {
+    if (d1 && d1.isConfigured()) {
         try {
             const v = await d1.read(); // 从 D1 读取整份 JSON
             if (v) { store = normalizeStore(JSON.parse(v)); return store; }
@@ -62,19 +67,38 @@ async function loadStore() {
 }
 
 let saveTimer = null;
+const BACKUP_KEEP = 7; // 保留最近 7 份带时间戳的本地备份
 function saveStore() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
         const data = JSON.stringify(store, null, 2);
-        if (d1.isConfigured()) {
+        if (d1 && d1.isConfigured()) {
             d1.write(data).catch(e => console.error('[store] D1 写入失败:', e.message));
-        } else if (fs && path) {
+            return;
+        }
+        if (!fs || !path) return;
+        try {
+            fs.mkdirSync(DATA_DIR, { recursive: true });
+            // 原子写：先写临时文件再 rename，避免写入中途进程被杀导致半截文件
+            const tmp = STORE_FILE + '.tmp';
+            fs.writeFileSync(tmp, data);
+            fs.renameSync(tmp, STORE_FILE);
+            // 滚动本地备份：每次保存留一份带时间戳副本，防误删/损坏可回滚
             try {
-                fs.mkdirSync(DATA_DIR, { recursive: true });
-                fs.writeFileSync(STORE_FILE, data);
-            } catch (e) {
-                console.error('保存失败', e);
+                fs.mkdirSync(BACKUP_DIR, { recursive: true });
+                const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+                fs.copyFileSync(STORE_FILE, path.join(BACKUP_DIR, `store-${stamp}.json`));
+                const files = fs.readdirSync(BACKUP_DIR)
+                    .filter(f => f.startsWith('store-') && f.endsWith('.json'))
+                    .sort();
+                while (files.length > BACKUP_KEEP) {
+                    fs.unlinkSync(path.join(BACKUP_DIR, files.shift()));
+                }
+            } catch (be) {
+                console.error('[store] 本地备份失败:', be && be.message);
             }
+        } catch (e) {
+            console.error('保存失败', e);
         }
     }, 200);
 }
