@@ -60,9 +60,29 @@ async function loadStore() {
         return store;
     }
     try {
-        if (fs) { store = normalizeStore(JSON.parse(fs.readFileSync(STORE_FILE, 'utf8'))); return store; }
+        if (fs) { store = normalizeStore(JSON.parse(fs.readFileSync(STORE_FILE, 'utf8'))); }
     } catch { /* 无本地文件 → 空存储 */ }
-    store = { users: {} };
+    store = store || { users: {} };
+    if (!store.users) store.users = {};
+
+    // Render 免费档磁盘是临时的，重部署后本地文件会被清空。
+    // 若本地为空且配置了 BOOTSTRAP_URL（指向 GitHub 提交的备份 raw 地址），
+    // 启动即从该备份恢复，实现「重部署自愈、数据不丢」。
+    if (Object.keys(store.users).length === 0 && typeof process !== 'undefined' && process.env && process.env.BOOTSTRAP_URL) {
+        try {
+            const r = await fetch(process.env.BOOTSTRAP_URL, { headers: { 'User-Agent': 'swimtrack-bootstrap' } });
+            if (r.ok) {
+                const parsed = JSON.parse(await r.text());
+                if (parsed && parsed.users) {
+                    store = normalizeStore(parsed);
+                    console.log('[store] 已从 BOOTSTRAP_URL 恢复', Object.keys(store.users).length, '个账号');
+                    saveStore();
+                }
+            }
+        } catch (e) {
+            console.error('[store] BOOTSTRAP_URL 恢复失败:', e.message);
+        }
+    }
     return store;
 }
 
@@ -175,6 +195,11 @@ async function handleApi(req) {
     const method = req.method;
     const p = req.pathname;
     try {
+        // 公开健康检查（Render 健康检查探针 + Cloudflare 定时保活，无需登录）
+        if (p === '/api/health' && method === 'GET') {
+            return json(200, { ok: true, time: Date.now(), store: getStoreMode() });
+        }
+
         // 注册
         if (p === '/api/register' && method === 'POST') {
             const b = parseBody(req.bodyText);
@@ -371,6 +396,23 @@ async function handleApi(req) {
             return json(200, { ok: true, count: user.records.length });
         }
 
+        // 整库备份 / 恢复（由 EXPORT_TOKEN 保护，供 GitHub Actions 每日异地备份 + 灾难恢复）
+        const backupToken = (typeof process !== 'undefined' && process.env && process.env.EXPORT_TOKEN) || '';
+        const reqToken = (req.headers && (req.headers['x-backup-token'] || (req.headers['authorization'] || '').replace('Bearer ', ''))) || '';
+        const backupAuth = Boolean(backupToken) && reqToken === backupToken;
+        if (p === '/api/backup' && method === 'GET') {
+            if (!backupAuth) return json(401, { error: '未授权（需要 x-backup-token）' });
+            return json(200, store);
+        }
+        if (p === '/api/restore' && method === 'POST') {
+            if (!backupAuth) return json(401, { error: '未授权（需要 x-backup-token）' });
+            const b = parseBody(req.bodyText);
+            if (!b || typeof b !== 'object' || !b.users) return json(400, { error: '备份格式无效' });
+            store = normalizeStore(b);
+            saveStore();
+            return json(200, { ok: true, accounts: Object.keys(store.users).length });
+        }
+
         return json(404, { error: '接口不存在' });
     } catch (e) {
         if (e && e instanceof SyntaxError) return json(400, { error: '请求体格式错误' });
@@ -379,7 +421,7 @@ async function handleApi(req) {
     }
 }
 
-function getStoreMode() { return d1.isConfigured() ? 'Cloudflare D1' : 'local file'; }
+function getStoreMode() { return (d1 && d1.isConfigured()) ? 'Cloudflare D1' : 'local file'; }
 function getStoreSnapshot() { return JSON.stringify(store, null, 2); }
 
-module.exports = { handleApi, loadStore, getStoreMode, getStoreSnapshot, configureD1: d1.configure };
+module.exports = { handleApi, loadStore, getStoreMode, getStoreSnapshot, configureD1: (d1 ? d1.configure : undefined) };
