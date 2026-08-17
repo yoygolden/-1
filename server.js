@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * SwimTrack Node 入口（本地开发 / 灾备）
+ * SwimTrack Node 入口（Railway / 本地开发 / 灾备）
  * 同进程托管前端静态文件（serveStatic）+ /api 后端（api.js 核心逻辑）。
- * Cloudflare Workers 部署见 worker.js（前端静态由 Workers Assets 托管，无需本文件）。
+ * Railway 部署直接 `npm start` 即可，数据落在 DATA_DIR（建议挂持久化卷 /data）。
  */
 const http = require('http');
 const fs = require('fs');
