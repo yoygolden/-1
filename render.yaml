@@ -1,0 +1,23 @@
+# Render 部署配置（GitHub + Render + Cloudflare）
+# 部署方式：Render 控制台 New → Web Service → 连接 GitHub 仓库 yoygolden/-1（分支 main）
+# 本文件会被 Render 自动识别；也可在控制台手动填写（两者二选一）。
+services:
+  - type: web
+    name: swimtrack
+    runtime: node
+    plan: free            # 免费档：15 分钟无访问自动休眠，由 Cloudflare Cron 定时保活
+    region: oregon        # 可选：singapore / frankfurt 等
+    branch: main
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health   # Render 用此路径判断实例存活
+    envVars:
+      - key: PORT
+        value: 3000       # Render 会自动注入自己的 PORT，这里仅是本地兜底
+      - key: DATA_DIR
+        value: /data      # 免费档无持久磁盘，此目录仍为临时；数据靠每日备份 + 启动自愈
+      - key: EXPORT_TOKEN
+        sync: false       # 在 Render 控制台手动填写（与 GitHub Secret EXPORT_TOKEN 保持一致）
+      - key: BOOTSTRAP_URL
+        sync: false       # 填 GitHub 上 backups/store.json 的 raw 地址，实现重部署自愈
+    # 免费档默认不挂载持久磁盘（disk 仅付费可用），故不在此声明 disk。
