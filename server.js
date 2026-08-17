@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * SwimTrack Node 入口（Railway / 本地开发 / 灾备）
+ * SwimTrack Node 入口（Render / 本地开发 / 灾备）
  * 同进程托管前端静态文件（serveStatic）+ /api 后端（api.js 核心逻辑）。
- * Railway 部署直接 `npm start` 即可，数据落在 DATA_DIR（建议挂持久化卷 /data）。
+ * Render 免费档磁盘临时，数据靠每日 GitHub 备份 + 启动 BOOTSTRAP_URL 自愈；详见部署文档。
  */
 const http = require('http');
 const fs = require('fs');
