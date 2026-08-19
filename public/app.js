@@ -135,6 +135,12 @@ const Store = {
 };
 
 /* ==================== 云端账号 API（多设备同步） ==================== */
+/* ==================== 部署配置 ==================== */
+// 由 config.js（先于本文件加载）注入；默认开启云端（Cloudflare Workers 版）。
+// GitHub Pages 等纯静态部署将 cloudEnabled 设为 false，应用自动走本机模式。
+const CONFIG = (typeof window !== 'undefined' && window.__SWIM_CONFIG__) || {};
+const CLOUD_ENABLED = CONFIG.cloudEnabled !== false;
+
 const CloudAPI = {
     TOKEN_KEY: 'swimtrack_cloud',
     ACCT_KEY: 'swimtrack_cloud_account',
@@ -154,6 +160,7 @@ const CloudAPI = {
     get connected() { return !!this.token && !this.disabled; },
 
     async request(path, opts = {}) {
+        if (!CLOUD_ENABLED) throw new Error('云端服务暂不可用（当前为离线部署，数据仅存本机）');
         const headers = { 'Content-Type': 'application/json' };
         if (this.token) headers['Authorization'] = 'Bearer ' + this.token;
         // 超时保护：弱网下 fetch 可能长时间挂起，导致登录界面一直转圈
@@ -1401,6 +1408,12 @@ const PageProfile = {
                 this.renderCloud();
             });
         } else {
+            if (!CLOUD_ENABLED) {
+                card.innerHTML = `
+                    <div class="cloud-title">📱 本机模式</div>
+                    <div class="cloud-desc">当前为离线部署，成绩与打卡仅保存在本机浏览器（换设备 / 清缓存会丢失）。需要多设备云端同步时，请使用 Cloudflare 版地址或绑定可访问的后端。</div>`;
+                return;
+            }
             card.innerHTML = `
                 <div class="cloud-title">☁️ 云端同步</div>
                 <div class="cloud-desc">登录云端账号后，可在其他手机登录同一账号查看成绩</div>
