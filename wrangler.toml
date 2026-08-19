@@ -1,6 +1,6 @@
 name = "swimtrack"
 main = "worker.js"
-compatibility_date = "2024-09-23"
+compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
 
 # Cloudflare 账号（已填入；CI 中也可用 secrets.CF_ACCOUNT_ID 覆盖）
