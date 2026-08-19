@@ -76,7 +76,7 @@ async function loadStore() {
                 if (parsed && parsed.users) {
                     store = normalizeStore(parsed);
                     console.log('[store] 已从 BOOTSTRAP_URL 恢复', Object.keys(store.users).length, '个账号');
-                    saveStore();
+                    await saveStore();
                 }
             }
         } catch (e) {
@@ -86,41 +86,42 @@ async function loadStore() {
     return store;
 }
 
-let saveTimer = null;
-const BACKUP_KEEP = 7; // 保留最近 7 份带时间戳的本地备份
-function saveStore() {
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-        const data = JSON.stringify(store, null, 2);
-        if (d1 && d1.isConfigured()) {
-            d1.write(data).catch(e => console.error('[store] D1 写入失败:', e.message));
-            return;
-        }
-        if (!fs || !path) return;
+const BACKUP_KEEP = 7; // 保留最近 7 份带时间戳的本地备份（仅 Node / 本地文件模式使用）
+// 持久化（异步）：
+// - D1 模式：按账号写入（d1.write 接收 store 对象），写入失败仅记录错误、不中断请求
+// - 本地文件模式：原子写（临时文件 + rename）+ 滚动备份
+// 注意：Workers 实例可能在响应返回后被冻结，因此 D1 写入在请求处理内 await 完成，避免丢最后一条写。
+async function saveStore() {
+    const data = JSON.stringify(store, null, 2);
+    if (d1 && d1.isConfigured()) {
+        try { await d1.write(store); }
+        catch (e) { console.error('[store] D1 写入失败:', e && e.message); }
+        return;
+    }
+    if (!fs || !path) return;
+    try {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+        // 原子写：先写临时文件再 rename，避免写入中途进程被杀导致半截文件
+        const tmp = STORE_FILE + '.tmp';
+        fs.writeFileSync(tmp, data);
+        fs.renameSync(tmp, STORE_FILE);
+        // 滚动本地备份：每次保存留一份带时间戳副本，防误删/损坏可回滚
         try {
-            fs.mkdirSync(DATA_DIR, { recursive: true });
-            // 原子写：先写临时文件再 rename，避免写入中途进程被杀导致半截文件
-            const tmp = STORE_FILE + '.tmp';
-            fs.writeFileSync(tmp, data);
-            fs.renameSync(tmp, STORE_FILE);
-            // 滚动本地备份：每次保存留一份带时间戳副本，防误删/损坏可回滚
-            try {
-                fs.mkdirSync(BACKUP_DIR, { recursive: true });
-                const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-                fs.copyFileSync(STORE_FILE, path.join(BACKUP_DIR, `store-${stamp}.json`));
-                const files = fs.readdirSync(BACKUP_DIR)
-                    .filter(f => f.startsWith('store-') && f.endsWith('.json'))
-                    .sort();
-                while (files.length > BACKUP_KEEP) {
-                    fs.unlinkSync(path.join(BACKUP_DIR, files.shift()));
-                }
-            } catch (be) {
-                console.error('[store] 本地备份失败:', be && be.message);
+            fs.mkdirSync(BACKUP_DIR, { recursive: true });
+            const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+            fs.copyFileSync(STORE_FILE, path.join(BACKUP_DIR, `store-${stamp}.json`));
+            const files = fs.readdirSync(BACKUP_DIR)
+                .filter(f => f.startsWith('store-') && f.endsWith('.json'))
+                .sort();
+            while (files.length > BACKUP_KEEP) {
+                fs.unlinkSync(path.join(BACKUP_DIR, files.shift()));
             }
-        } catch (e) {
-            console.error('保存失败', e);
+        } catch (be) {
+            console.error('[store] 本地备份失败:', be && be.message);
         }
-    }, 200);
+    } catch (e) {
+        console.error('保存失败', e);
+    }
 }
 
 // ---------- 工具 ----------
@@ -217,7 +218,7 @@ async function handleApi(req) {
                 blindBoxes: [],
                 deletedIds: []
             };
-            saveStore();
+            await saveStore();
             return json(200, { token, nickname: store.users[b.account].nickname, account: b.account });
         }
 
@@ -232,7 +233,7 @@ async function handleApi(req) {
             const token = newToken();
             u.tokens.push(token);
             if (u.tokens.length > 10) u.tokens = u.tokens.slice(-10); // 保留最近 10 台设备的会话
-            saveStore();
+            await saveStore();
             return json(200, { token: token, nickname: u.nickname, account: u.account });
         }
 
@@ -247,7 +248,7 @@ async function handleApi(req) {
         if (p === '/api/me' && method === 'PUT') {
             const b = parseBody(req.bodyText);
             if (b.nickname) user.nickname = b.nickname;
-            saveStore();
+            await saveStore();
             return json(200, { account: user.account, nickname: user.nickname });
         }
 
@@ -280,7 +281,7 @@ async function handleApi(req) {
             };
             item.earnedPoints = derivePoints(item); // 服务端重算，忽略客户端上报值
             user.records.push(item);
-            saveStore();
+            await saveStore();
             return json(200, { record: item });
         }
 
@@ -295,7 +296,7 @@ async function handleApi(req) {
                 const merged = { ...user.records[idx], ...b.record, id };
                 merged.earnedPoints = derivePoints(merged); // 编辑后重算积分
                 user.records[idx] = merged;
-                saveStore();
+                await saveStore();
                 return json(200, { record: merged });
             }
             if (method === 'DELETE') {
@@ -303,7 +304,7 @@ async function handleApi(req) {
                 user.records.splice(idx, 1);
                 if (!Array.isArray(user.deletedIds)) user.deletedIds = [];
                 if (!user.deletedIds.includes(id)) user.deletedIds.push(id);
-                saveStore();
+                await saveStore();
                 return json(200, { ok: true });
             }
         }
@@ -334,7 +335,7 @@ async function handleApi(req) {
                 if (x && x.id) bbMap[x.id] = { ...x };
             });
             user.blindBoxes = Object.values(bbMap);
-            saveStore();
+            await saveStore();
             return json(200, {
                 records: liveRecords(user),
                 checkins: user.checkins,
@@ -392,7 +393,7 @@ async function handleApi(req) {
                 return item;
             });
             user.deletedIds = []; // 导入整体覆盖，墓碑清空避免挡住重新导入
-            saveStore();
+            await saveStore();
             return json(200, { ok: true, count: user.records.length });
         }
 
@@ -409,7 +410,7 @@ async function handleApi(req) {
             const b = parseBody(req.bodyText);
             if (!b || typeof b !== 'object' || !b.users) return json(400, { error: '备份格式无效' });
             store = normalizeStore(b);
-            saveStore();
+            await saveStore();
             return json(200, { ok: true, accounts: Object.keys(store.users).length });
         }
 

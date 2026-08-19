@@ -1,10 +1,10 @@
-name: Daily backup
+name: Daily D1 backup
 
-# 每日把线上 SwimTrack 的整库（/api/backup）下载并提交到仓库 backups/store.json。
-# 配合 Render 的 BOOTSTRAP_URL 指向该 raw 文件，实现「重部署自愈、数据不丢」。
+# 每日把线上 SwimTrack 的 D1 整库导出为 SQL，提交到仓库 backups/store.sql，作为异地兜底。
+# D1 本身已是多副本冗余，此备份用于极端情况下的灾难恢复与历史追溯。
 on:
   schedule:
-    - cron: '23 16 * * *'   # 每天 UTC 16:23（避开整点，降低与 GitHub 限流冲突）
+    - cron: '23 16 * * *'   # 每天 UTC 16:23（避开整点）
   workflow_dispatch: {}      # 允许手动触发
 
 permissions:
@@ -16,23 +16,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download store from app
-        env:
-          APP_URL: ${{ secrets.APP_URL }}
-          EXPORT_TOKEN: ${{ secrets.EXPORT_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Wrangler
+        run: npm install -g wrangler
+
+      - name: Export D1 to SQL
         run: |
           mkdir -p backups
-          curl -fsSL -H "x-backup-token: ${EXPORT_TOKEN}" "${APP_URL}/api/backup" -o backups/store.json
-          echo "downloaded bytes: $(wc -c < backups/store.json)"
+          wrangler d1 export swimtrack --remote --output=backups/store.sql
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_DEPLOY_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
 
       - name: Commit backup
         run: |
           git config user.name "swimtrack-bot"
           git config user.email "bot@swimtrack.local"
-          git add backups/store.json
+          git add backups/store.sql
           if git diff --cached --quiet; then
             echo "no changes, skip commit"
           else
-            git commit -m "chore: daily backup $(date -u +%F)"
+            git commit -m "chore: daily D1 backup $(date -u +%F)"
             git push
           fi
