@@ -3,8 +3,8 @@ main = "worker.js"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
-# Cloudflare 账号（CI 中通过 secrets.CF_ACCOUNT_ID 注入，本地用 ~/.cloudflare/credentials 或环境变量）
-account_id = "${CLOUDFLARE_ACCOUNT_ID}"
+# Cloudflare 账号（已填入；CI 中也可用 secrets.CF_ACCOUNT_ID 覆盖）
+account_id = "831a8b34162a1ae795c7e721756f367a"
 
 # 静态资源：仅 public/ 目录下的前端文件对外暴露，服务端代码（api.js / worker.js / d1store.js 等）不对外提供
 assets = { directory = "public", binding = "ASSETS", not_found_handling = "single-page-application" }
@@ -12,6 +12,6 @@ assets = { directory = "public", binding = "ASSETS", not_found_handling = "singl
 # 持久化：Cloudflare D1（托管 SQLite），无需 R2
 [[d1_databases]]
 binding = "DB"
-database_name = "swimtrack"
-database_id = "${D1_DATABASE_ID}"
+database_name = "swimtrack-db"
+database_id = "a9ebff24-be4f-4220-860d-140d60a24a08"
 migrations_dir = "migrations"

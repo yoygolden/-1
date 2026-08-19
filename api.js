@@ -19,7 +19,10 @@ if (typeof process !== 'undefined' && typeof process.getBuiltinModule === 'funct
     try { fs = process.getBuiltinModule('fs'); path = process.getBuiltinModule('path'); } catch (e) {}
 }
 
-const ROOT = __dirname;
+// 兼容 Workers（ESM 打包，无 __dirname）与 Node 本地：用 typeof 判断，避免直接引用未定义全局导致构建/运行报错
+const ROOT = (typeof __dirname !== 'undefined')
+    ? __dirname
+    : (typeof process !== 'undefined' && typeof process.cwd === 'function' ? process.cwd() : '.');
 const DATA_DIR = (typeof process !== 'undefined' && process.env && process.env.DATA_DIR)
     || (path ? path.join(ROOT, 'data') : '/tmp');
 const STORE_FILE = path ? path.join(DATA_DIR, 'store.json') : '/tmp/store.json';

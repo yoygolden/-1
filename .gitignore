@@ -8,3 +8,5 @@ _testdata/
 # 临时日志 / 杂项（不进入仓库）
 _*.txt
 *.Unicode
+# wrangler 本地运行态（部署产物/本地态，不进入仓库）
+.wrangler/
